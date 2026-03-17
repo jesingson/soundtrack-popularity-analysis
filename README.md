@@ -1,4 +1,5 @@
 # Soundtrack Popularity Analysis Pipeline
+Refactored a notebook-based soundtrack popularity study into a modular Python analysis pipeline that performs feature engineering, statistical analysis, and automated HTML reporting.
 
 ## Overview
 
@@ -16,6 +17,13 @@ The original notebook included additional exploratory components such as hypothe
 
 ---
 
+## Motivation
+
+Exploratory analysis is often conducted in notebooks, but notebook workflows can be difficult to reuse, maintain, or automate.  
+
+This project demonstrates how a notebook-based data analysis can be refactored into a structured Python pipeline that separates data preparation, analysis logic, and visualization into reusable modules.
+
+---
 # Quick Start (30 seconds)
 
 1. Install dependencies
@@ -333,11 +341,10 @@ The modular structure of the project makes it straightforward to extend with uni
 
 ---
 
-# Assignment Context
+# Project Background
+This project originated as part of a data science coursework exercise focused on converting notebook-based analysis into a maintainable Python pipeline.
 
-This repository satisfies the requirements of the **MLP Productionalization Assignment**, which required converting a previously developed Jupyter Notebook into a reusable Python script.
-
-The project demonstrates:
+The repository demonstrates:
 
 - modular Python architecture
 - reusable functions with single responsibilities
@@ -346,6 +353,15 @@ The project demonstrates:
 - configurable command-line execution
 - reproducible analytical outputs
 
-The original source notebook is also included in the repository for reference during grading and comparison.
+The original exploratory notebook is included in the repository for reference.
 
-While the original notebook contained additional exploratory components (such as hypothesis testing), the production script focuses on the **core reproducible analytical workflow** required to generate consistent outputs from new datasets.
+# Extending the Analysis
+
+The modular architecture allows additional analytical components or visualizations to be added easily.
+
+For example, future extensions may include:
+
+- additional exploratory visualizations
+- alternative regression specifications
+- feature importance analysis
+- interactive dashboards built with Streamlit
