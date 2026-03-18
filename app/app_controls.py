@@ -118,3 +118,103 @@ def get_regression_controls() -> dict:
         "show_coefficient_table": show_coefficient_table,
         "show_model_summary": show_model_summary,
     }
+
+def get_ridge_controls(
+    preset_labels: dict[str, str],
+    preset_keys: list[str],
+    all_available_features: list[str],
+    default_custom_features: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the ridge explorer.
+
+    Args:
+        preset_labels: Mapping from preset key to display label.
+        preset_keys: Ordered list of preset keys.
+        all_available_features: Full set of available ridge features.
+        default_custom_features: Default feature list to preselect when
+            the user chooses the custom preset.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Ridge Explorer Controls")
+
+    preset_key = st.sidebar.selectbox(
+        "Preset",
+        options=preset_keys,
+        index=0,
+        format_func=lambda x: preset_labels[x],
+    )
+
+    top_n = st.sidebar.slider(
+        "Top-N size for dynamic presets",
+        min_value=5,
+        max_value=12,
+        value=8,
+        step=1,
+    )
+
+    if preset_key == "custom":
+        selected_features = st.sidebar.multiselect(
+            "Custom features",
+            options=all_available_features,
+            default=[
+                f for f in default_custom_features
+                if f in all_available_features
+            ],
+        )
+    else:
+        selected_features = []
+
+    st.sidebar.markdown("---")
+
+    with st.sidebar.expander("Advanced density controls", expanded=False):
+        bins = st.slider(
+            "Bins",
+            min_value=40,
+            max_value=120,
+            value=80,
+            step=10,
+        )
+        smooth_window = st.slider(
+            "Smoothing window",
+            min_value=3,
+            max_value=21,
+            value=11,
+            step=2,
+        )
+        min_group_n = st.slider(
+            "Minimum group size",
+            min_value=5,
+            max_value=50,
+            value=10,
+            step=5,
+        )
+
+    show_order_table = st.sidebar.checkbox(
+        "Show ordering table",
+        value=True,
+    )
+
+    show_density_table = st.sidebar.checkbox(
+        "Show density dataframe sample",
+        value=False,
+    )
+
+    show_ridge_long_sample = st.sidebar.checkbox(
+        "Show ridge_long sample",
+        value=False,
+    )
+
+    return {
+        "preset_key": preset_key,
+        "top_n": top_n,
+        "selected_features": selected_features,
+        "bins": bins,
+        "smooth_window": smooth_window,
+        "min_group_n": min_group_n,
+        "show_order_table": show_order_table,
+        "show_density_table": show_density_table,
+        "show_ridge_long_sample": show_ridge_long_sample,
+    }

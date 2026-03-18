@@ -5,6 +5,7 @@ import streamlit as st
 
 import data_processing as dp
 import regression_analysis as reg
+import ridge_analysis as reg_ridge
 
 
 @st.cache_data
@@ -86,3 +87,33 @@ def load_regression_results(
         threshold=threshold,
     )
     return regression_results
+
+@st.cache_data
+def load_ridge_dynamic_groups(
+    album_file_path: str = "data/albums.csv",
+    wide_file_path: str = "data/wide.csv",
+    y_col: str = dp.TARGET_COL,
+    top_n: int = 8,
+) -> dict:
+    """
+    Load analysis data and compute dynamic ridge feature groups.
+
+    Args:
+        album_file_path: Path to the album-level CSV.
+        wide_file_path: Path to the wide-format CSV.
+        y_col: Target column used for ranking features.
+        top_n: Number of features to retain in each dynamic ridge group.
+
+    Returns:
+        dict: Dynamic ridge groups keyed by preset name.
+    """
+    album_analytics_df = load_analysis_data(
+        album_file_path=album_file_path,
+        wide_file_path=wide_file_path,
+    )
+
+    return reg_ridge.build_dynamic_ridge_groups(
+        albums_df=album_analytics_df,
+        y_col=y_col,
+        top_n=top_n,
+    )
