@@ -546,3 +546,264 @@ def build_coefficient_plot_df(
     coef_df = coef_df.sort_values("abs_coef", ascending=False)
 
     return coef_df
+
+def build_scatterplot_feature_ranking(
+        album_analytics_df: pd.DataFrame,
+        continuous_features: list[str] | None = None,
+        target_col: str = TARGET_COL,
+        method: str = "pearson",
+) -> pd.DataFrame:
+    """
+    Rank continuous features by their univariate relationship with the target.
+
+    This helper is intended for Streamlit-style exploratory scatterplot
+    pages. It evaluates each continuous feature against the target using
+    a simple pairwise correlation, then derives a univariate R-squared
+    value (r^2) so features can be sorted from strongest to weakest
+    linear relationship.
+
+    Unlike the multivariate OLS model R-squared, these values reflect
+    one-feature-at-a-time relationships only.
+
+    Args:
+        album_analytics_df: Analysis-ready dataframe containing candidate
+            continuous features and the target column.
+        continuous_features: Optional list of continuous features to rank.
+            If omitted, the function uses the same continuous feature set
+            defined by ``define_regression_features(...)``.
+        target_col: Name of the target column.
+        method: Correlation method to use. For this use case, "pearson"
+            is the default and most interpretable because r^2 corresponds
+            to simple linear fit strength.
+
+    Returns:
+        pd.DataFrame: Ranked dataframe with one row per feature and the
+        following columns:
+            - feature
+            - corr
+            - abs_corr
+            - r_squared
+            - direction
+            - rank
+
+    Raises:
+        ValueError: If the target column is missing, no continuous
+            features are available, or none of the requested features
+            exist in the dataframe.
+    """
+    if target_col not in album_analytics_df.columns:
+        raise ValueError(
+            f"Target column '{target_col}' was not found in the analysis "
+            f"dataframe."
+        )
+
+    if continuous_features is None:
+        feature_config = define_regression_features(
+            film_features=FILM_FEATURES,
+            album_features=ALBUM_FEATURES,
+            derived_award_cols=DERIVED_AWARD_COLS,
+            target_col=target_col,
+        )
+        continuous_features = feature_config["continuous_features"]
+
+    if not continuous_features:
+        raise ValueError(
+            "At least one continuous feature is required to build the "
+            "scatterplot feature ranking."
+        )
+
+    available_features = [
+        col for col in continuous_features if col in album_analytics_df.columns
+    ]
+    if not available_features:
+        raise ValueError(
+            "None of the requested continuous features were found in the "
+            "analysis dataframe."
+        )
+
+    corr_df = album_analytics_df[[target_col] + available_features].copy()
+
+    corr_series = (
+        corr_df
+        .corr(method=method)[target_col]
+        .drop(target_col)
+        .rename("corr")
+    )
+
+    ranking_df = (
+        corr_series
+        .to_frame()
+        .assign(
+            abs_corr=lambda x: x["corr"].abs(),
+            r_squared=lambda x: x["corr"] ** 2,
+            direction=lambda x: np.where(x["corr"] >= 0, "positive", "negative"),
+        )
+        .sort_values("abs_corr", ascending=False)
+        .reset_index()
+        .rename(columns={"index": "feature"})
+    )
+
+    ranking_df["rank"] = range(1, len(ranking_df) + 1)
+
+    return ranking_df
+
+def build_exploratory_scatter_data(
+        album_analytics_df: pd.DataFrame,
+        feature_col: str,
+        metadata_df: pd.DataFrame | None = None,
+        metadata_cols: list[str] | None = None,
+        id_cols: list[str] | None = None,
+        target_col: str = TARGET_COL,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Build a generic scatterplot dataset using regression-style transforms.
+
+    This helper prepares point-level and fitted-line data for exploratory
+    scatterplots of one selected continuous feature against the soundtrack
+    popularity target. The selected feature is transformed using the same
+    logic as the regression workflow:
+
+    - heavy-tailed features are log-transformed when appropriate
+    - continuous features are standardized afterward
+
+    The returned point dataframe includes both the transformed x-value
+    used for plotting and the raw feature value used for tooltip display.
+    If a richer metadata dataframe is supplied, descriptive columns such
+    as soundtrack title, film title, or composer can also be merged in.
+
+    Args:
+        album_analytics_df: Analysis-ready dataframe containing IDs, the
+            selected feature, and the target column.
+        feature_col: Continuous feature to plot on the x-axis.
+        metadata_df: Optional richer dataframe to merge in for tooltip
+            metadata. This is useful because the analysis-ready dataframe
+            does not retain descriptive title fields.
+        metadata_cols: Optional list of descriptive columns to keep from
+            ``metadata_df``. Only columns that actually exist will be used.
+        id_cols: Optional identifier columns used to merge metadata.
+            Defaults to ``["tmdb_id", "release_group_mbid"]``.
+        target_col: Name of the target column to plot on the y-axis.
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame, dict]:
+            1. Point dataframe for scatterplot rendering
+            2. Two-point fitted line dataframe
+            3. Metrics/metadata dictionary describing the transform and fit
+
+    Raises:
+        ValueError: If the selected feature or target column is missing,
+            or if fewer than two valid rows remain after preparation.
+    """
+    if id_cols is None:
+        id_cols = ["tmdb_id", "release_group_mbid"]
+
+    if target_col not in album_analytics_df.columns:
+        raise ValueError(
+            f"Target column '{target_col}' was not found in the analysis "
+            f"dataframe."
+        )
+
+    if feature_col not in album_analytics_df.columns:
+        raise ValueError(
+            f"Feature column '{feature_col}' was not found in the analysis "
+            f"dataframe."
+        )
+
+    # Use the regression feature definitions so we can reuse the exact
+    # binary/continuous distinction from the modeling workflow.
+    feature_config = define_regression_features(
+        film_features=FILM_FEATURES,
+        album_features=ALBUM_FEATURES,
+        derived_award_cols=DERIVED_AWARD_COLS,
+        target_col=target_col,
+    )
+    binary_features = feature_config["binary_features"]
+
+    if feature_col in binary_features:
+        raise ValueError(
+            f"Feature '{feature_col}' is binary. This helper is intended "
+            f"for continuous-feature scatterplots only."
+        )
+
+    required_cols = [c for c in id_cols if c in album_analytics_df.columns]
+    source_df = album_analytics_df[required_cols + [feature_col, target_col]].copy()
+
+    # Preserve raw feature values for tooltip use before any transforms.
+    source_df[f"{feature_col}_raw"] = source_df[feature_col]
+
+    # Reuse the same regression transform logic applied in the model
+    # workflow so the exploratory plot geometry matches the regression view.
+    transform_results = apply_regression_transforms(
+        album_analytics_df=source_df,
+        x_cols=[feature_col],
+        binary_features=binary_features,
+        target_col=target_col,
+    )
+    df_model = transform_results["df_model"].copy()
+
+    # Attach IDs and raw feature values back to the transformed frame.
+    df_model[required_cols] = source_df[required_cols]
+    df_model[f"{feature_col}_raw"] = source_df[f"{feature_col}_raw"]
+
+    plot_df = df_model.rename(
+        columns={
+            feature_col: "x_value",
+            target_col: "y_value",
+            f"{feature_col}_raw": "x_raw_value",
+        }
+    )
+
+    # Bring in optional descriptive metadata for tooltips.
+    if metadata_df is not None:
+        if metadata_cols is None:
+            metadata_cols = []
+
+        available_meta_cols = [c for c in metadata_cols if c in metadata_df.columns]
+        available_id_cols = [c for c in id_cols if c in metadata_df.columns]
+
+        if available_meta_cols and available_id_cols:
+            meta_merge_df = metadata_df[available_id_cols + available_meta_cols].drop_duplicates()
+            plot_df = plot_df.merge(
+                meta_merge_df,
+                on=[c for c in available_id_cols if c in plot_df.columns],
+                how="left",
+            )
+
+    # Remove incomplete rows after transforms / metadata merge.
+    plot_df = plot_df.dropna(subset=["x_value", "y_value"])
+
+    if len(plot_df) < 2:
+        raise ValueError(
+            "At least two non-null rows are required to build the "
+            "exploratory scatterplot."
+        )
+
+    x = plot_df["x_value"].to_numpy()
+    y = plot_df["y_value"].to_numpy()
+    slope, intercept = np.polyfit(x, y, 1)
+
+    x_min, x_max = float(x.min()), float(x.max())
+    line_df = pd.DataFrame({
+        "x_value": [x_min, x_max],
+        "y_value": [slope * x_min + intercept, slope * x_max + intercept],
+    })
+
+    corr = float(plot_df["x_value"].corr(plot_df["y_value"], method="pearson"))
+
+    metrics = {
+        "feature_col": feature_col,
+        "target_col": target_col,
+        "rows_used": len(plot_df),
+        "pearson_r": corr,
+        "r_squared": corr ** 2,
+        "is_logged": feature_col in transform_results["logged_predictors"],
+        "is_standardized": feature_col in transform_results["x_cont"],
+        "x_axis_label": (
+            f"{feature_col} (log-transformed, standardized)"
+            if feature_col in transform_results["logged_predictors"]
+            else f"{feature_col} (standardized)"
+        ),
+        "tooltip_raw_col": "x_raw_value",
+    }
+
+    return plot_df, line_df, metrics
