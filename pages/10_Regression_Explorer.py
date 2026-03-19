@@ -4,6 +4,7 @@ import regression_analysis as reg
 import regression_visualization as reg_viz
 from app.app_controls import get_regression_controls
 from app.app_data import load_regression_results
+from app.ui import apply_app_styles, rename_columns_for_display
 
 
 def render_regression_metrics(regression_results: dict) -> None:
@@ -47,7 +48,7 @@ def render_coefficient_chart(results):
     """
     coef_df = reg.build_coefficient_plot_df(results)
     chart = reg_viz.create_coefficient_whisker_chart(coef_df)
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
     return coef_df
 
 
@@ -69,8 +70,8 @@ def render_filter_summary(filter_results: dict) -> None:
     )
 
     st.dataframe(
-        filter_results["summary_df"].round(3),
-        use_container_width=True,
+        rename_columns_for_display(filter_results["summary_df"].round(3)),
+        width="stretch",
     )
 
     col1, col2 = st.columns(2)
@@ -154,6 +155,7 @@ def main() -> None:
         page_title="Regression Explorer",
         layout="wide",
     )
+    apply_app_styles()
 
     st.title("Regression Explorer")
     st.write(
@@ -179,8 +181,11 @@ def main() -> None:
     coef_df = render_coefficient_chart(results)
 
     if controls["show_coefficient_table"]:
-        st.subheader("Coefficient dataframe")
-        st.dataframe(coef_df.round(3), use_container_width=True)
+        st.subheader("Coefficient Dataframe")
+        st.dataframe(
+            rename_columns_for_display(coef_df.round(3)),
+            width="stretch",
+        )
 
     if controls["show_filter_summary"]:
         render_filter_summary(filter_results)

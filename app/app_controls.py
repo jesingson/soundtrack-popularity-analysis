@@ -42,36 +42,147 @@ def get_correlation_controls() -> dict:
     }
 
 
-def get_scatter_controls(feature_options: list[str]) -> dict:
+def get_scatter_controls(
+    guided_feature_options: list[str],
+    freeform_numeric_options: list[str],
+    color_options: list[str],
+    default_y: str,
+) -> dict:
     """
-    Render sidebar controls for the scatterplot explorer.
+    Render sidebar controls for the relationship explorer.
 
     Args:
-        feature_options: Ordered list of selectable feature names.
+        guided_feature_options: Ranked continuous features used in Guided mode.
+        freeform_numeric_options: Numeric columns available for freeform X/Y.
+        color_options: Optional categorical fields available for color encoding.
+        default_y: Default y-axis field for freeform mode.
 
     Returns:
         dict: Selected control values.
     """
-    st.sidebar.header("Scatterplot Controls")
+    st.sidebar.header("Relationship Controls")
 
-    selected_feature = st.sidebar.selectbox(
-        "X-axis feature",
-        options=feature_options,
+    mode = st.sidebar.radio(
+        "Explorer mode",
+        options=["Guided", "Freeform"],
         index=0,
+        help=(
+            "Guided uses the regression-oriented ranked feature view. "
+            "Freeform lets you choose any album-level numeric X and Y."
+        ),
     )
+
+    if mode == "Guided":
+        selected_feature = st.sidebar.selectbox(
+            "X-axis feature",
+            options=guided_feature_options,
+            index=0,
+        )
+
+        show_trendline = st.sidebar.checkbox(
+            "Show fitted line",
+            value=True,
+        )
+
+        show_feature_ranking = st.sidebar.checkbox(
+            "Show ranked feature table",
+            value=True,
+        )
+
+        x_col = selected_feature
+        y_col = default_y
+        color_col = "None"
+        transform_x = "None"
+        transform_y = "None"
+        apply_jitter = False
+        jitter_strength = 0.0
+
+    else:
+        default_x_index = 0
+        default_y_index = (
+            freeform_numeric_options.index(default_y)
+            if default_y in freeform_numeric_options
+            else 0
+        )
+
+        x_col = st.sidebar.selectbox(
+            "X-axis",
+            options=freeform_numeric_options,
+            index=default_x_index,
+        )
+
+        y_col = st.sidebar.selectbox(
+            "Y-axis",
+            options=freeform_numeric_options,
+            index=default_y_index,
+        )
+
+        color_col = st.sidebar.selectbox(
+            "Color grouping",
+            options=["None"] + color_options,
+            index=0,
+        )
+
+        st.sidebar.markdown("---")
+        st.sidebar.caption("Display and scale controls")
+
+        transform_x = st.sidebar.selectbox(
+            "Transform X",
+            options=["None", "Log1p"],
+            index=0,
+        )
+
+        transform_y = st.sidebar.selectbox(
+            "Transform Y",
+            options=["None", "Log1p"],
+            index=0,
+        )
+
+        apply_jitter = st.sidebar.checkbox(
+            "Jitter points",
+            value=False,
+            help=(
+                "Adds small random offsets for display only. "
+                "Useful when X or Y has many repeated values."
+            ),
+        )
+
+        if apply_jitter:
+            jitter_strength = st.sidebar.slider(
+                "Jitter strength",
+                min_value=0.000,
+                max_value=0.050,
+                value=0.008,
+                step=0.001,
+                format="%.3f",
+            )
+        else:
+            jitter_strength = 0.0
+
+        show_trendline = st.sidebar.checkbox(
+            "Show fitted line",
+            value=True,
+        )
+
+        show_feature_ranking = False
+        selected_feature = None
 
     show_data_table = st.sidebar.checkbox(
         "Show scatterplot data table",
         value=False,
     )
 
-    show_feature_ranking = st.sidebar.checkbox(
-        "Show ranked feature table",
-        value=True,
-    )
-
     return {
+        "mode": mode,
         "selected_feature": selected_feature,
+        "x_col": x_col,
+        "y_col": y_col,
+        "color_col": color_col,
+        "transform_x": transform_x,
+        "transform_y": transform_y,
+        "apply_jitter": apply_jitter,
+        "jitter_strength": jitter_strength,
+        "show_trendline": show_trendline,
         "show_data_table": show_data_table,
         "show_feature_ranking": show_feature_ranking,
     }

@@ -1,8 +1,9 @@
 import streamlit as st
 
 import analysis as an
-from app.app_data import load_analysis_data
 from app.app_controls import get_correlation_controls
+from app.app_data import load_analysis_data
+from app.ui import apply_app_styles, rename_columns_for_display
 
 
 def render_lollipop_section(
@@ -29,10 +30,13 @@ def render_lollipop_section(
     ).head(top_n).copy()
 
     chart = an.plot_lollipop_chart(corr_df_plot)
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
 
     if show_table:
-        st.dataframe(corr_df_plot, use_container_width=True)
+        st.dataframe(
+            rename_columns_for_display(corr_df_plot),
+            width="stretch",
+        )
 
 
 def render_heatmap_section(
@@ -59,14 +63,20 @@ def render_heatmap_section(
         title=f"Correlation Heatmap ({method.title()})",
     )
 
-    st.altair_chart(heatmap, use_container_width=True)
+    st.altair_chart(heatmap, width="stretch")
 
     if show_table:
         st.write("Correlation matrix")
-        st.dataframe(corr_matrix, use_container_width=True)
+        st.dataframe(
+            rename_columns_for_display(corr_matrix),
+            width="stretch",
+        )
 
         st.write("Long-form heatmap source")
-        st.dataframe(an.corr_to_long(corr_matrix), use_container_width=True)
+        st.dataframe(
+            rename_columns_for_display(an.corr_to_long(corr_matrix)),
+            width="stretch",
+        )
 
 
 def main() -> None:
@@ -77,6 +87,7 @@ def main() -> None:
         page_title="Correlation Explorer",
         layout="wide",
     )
+    apply_app_styles()
 
     st.title("Correlation Explorer")
     st.write(

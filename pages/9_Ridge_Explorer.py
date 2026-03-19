@@ -4,6 +4,7 @@ import ridge_analysis as ridge
 import ridge_visualization as ridge_viz
 from app.app_controls import get_ridge_controls
 from app.app_data import load_analysis_data, load_ridge_dynamic_groups
+from app.ui import apply_app_styles, rename_columns_for_display
 
 
 PRESET_LABELS = {
@@ -130,6 +131,7 @@ def main() -> None:
         page_title="Ridge Explorer",
         layout="wide",
     )
+    apply_app_styles()
 
     st.title("Ridge Explorer")
     st.write(
@@ -142,7 +144,6 @@ def main() -> None:
 
     album_analytics_df = load_analysis_data()
 
-    # Build dynamic presets first so the sidebar can use current top-N options.
     initial_top_n = 8
     preset_registry = build_ridge_presets(
         album_analytics_df=album_analytics_df,
@@ -167,7 +168,6 @@ def main() -> None:
         default_custom_features=ridge.DEFAULT_RIDGE_GROUPS["core_static"],
     )
 
-    # Rebuild presets if top_n changed from default.
     preset_registry = build_ridge_presets(
         album_analytics_df=album_analytics_df,
         top_n=controls["top_n"],
@@ -216,27 +216,29 @@ def main() -> None:
     with metric_col3:
         st.metric("Minimum group size", controls["min_group_n"])
 
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
 
     if controls["show_order_table"]:
-        st.subheader("Feature ordering table")
+        st.subheader("Feature Ordering Table")
         st.dataframe(
-            phase2_outputs["order_df"].round(3),
-            use_container_width=True,
+            rename_columns_for_display(phase2_outputs["order_df"].round(3)),
+            width="stretch",
         )
 
     if controls["show_density_table"]:
-        st.subheader("Density dataframe sample")
+        st.subheader("Density Dataframe Sample")
         st.dataframe(
-            phase2_outputs["ridge_density_df"].head(50),
-            use_container_width=True,
+            rename_columns_for_display(
+                phase2_outputs["ridge_density_df"].head(50)
+            ),
+            width="stretch",
         )
 
     if controls["show_ridge_long_sample"]:
-        st.subheader("ridge_long sample")
+        st.subheader("ridge_long Sample")
         st.dataframe(
-            ridge_outputs["ridge_long"].head(50),
-            use_container_width=True,
+            rename_columns_for_display(ridge_outputs["ridge_long"].head(50)),
+            width="stretch",
         )
 
 
