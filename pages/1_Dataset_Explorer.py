@@ -7,6 +7,7 @@ import streamlit as st
 
 from app.app_controls import get_dataset_controls
 from app.app_data import load_explorer_data
+from app.data_filters import filter_dataset, split_multivalue_genres
 from app.ui import (
     apply_app_styles,
     get_display_label,

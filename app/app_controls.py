@@ -1,6 +1,40 @@
 import streamlit as st
 from app.ui import get_display_label
 
+# Global Filter Controls (multiple pages)
+def get_global_filter_controls(
+    min_year: int,
+    max_year: int,
+    film_genre_options: list[str],
+    album_genre_options: list[str],
+) -> dict:
+    st.sidebar.markdown("### Global Filters")
+
+    year_range = st.sidebar.slider(
+        "Film year",
+        min_value=min_year,
+        max_value=max_year,
+        value=(min_year, max_year),
+    )
+
+    film_genres = st.sidebar.multiselect(
+        "Film genres",
+        options=film_genre_options,
+        default=[],
+    )
+
+    album_genres = st.sidebar.multiselect(
+        "Album genres",
+        options=album_genre_options,
+        default=[],
+    )
+
+    return {
+        "year_range": year_range,
+        "selected_film_genres": film_genres,
+        "selected_album_genres": album_genres,
+    }
+
 # PAGE 1 Controls
 def get_dataset_controls(
     min_year: int,
@@ -24,7 +58,7 @@ def get_dataset_controls(
     Returns:
         dict: Selected control values.
     """
-    st.sidebar.header("Dataset Controls")
+    st.sidebar.header("Global Filters")
 
     year_range = st.sidebar.slider(
         "Film year range",
@@ -47,6 +81,9 @@ def get_dataset_controls(
         default=[],
         help="Leave blank to include all album genres.",
     )
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("Dataset Controls")
 
     selected_composers = st.sidebar.multiselect(
         "Composers",
@@ -163,7 +200,7 @@ def get_distribution_controls(
 
         if not selected_groups:
             top_n = st.sidebar.slider(
-                "Top N groups",
+                "Top N groups to display",
                 min_value=3,
                 max_value=15,
                 value=8,
@@ -192,6 +229,171 @@ def get_distribution_controls(
         "top_n": top_n,
         "bins": bins,
         "show_table": show_table,
+    }
+
+# PAGE 3 Controls
+
+def get_group_comparison_controls(
+    numeric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+) -> dict:
+    """
+    Render sidebar controls for the Group Comparison Explorer.
+
+    Args:
+        numeric_options: Numeric columns eligible for comparison.
+        group_options: Grouping fields eligible for comparison.
+        group_value_options_map: Mapping from grouping field to selectable
+            group values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Group Comparison Controls")
+
+    metric = st.sidebar.selectbox(
+        "Metric",
+        options=numeric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    view_mode = st.sidebar.selectbox(
+        "View mode",
+        options=["Boxplot", "Violin", "Bar Ranking"],
+        index=0,
+    )
+
+    group_var = st.sidebar.selectbox(
+        "Group by",
+        options=group_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    selected_groups = st.sidebar.multiselect(
+        f"Select {get_display_label(group_var)} values",
+        options=group_value_options_map.get(group_var, []),
+        default=[],
+        help=(
+            "Type to search specific values. Leave blank to use the top N "
+            "groups by album count."
+        ),
+    )
+
+    top_n = None
+    if not selected_groups:
+        top_n = st.sidebar.slider(
+            "Top N groups to display",
+            min_value=3,
+            max_value=15,
+            value=8,
+            step=1,
+        )
+
+    min_group_size = st.sidebar.slider(
+        "Minimum albums per group",
+        min_value=3,
+        max_value=50,
+        value=5,
+        step=1,
+        help="Exclude groups with fewer than this many albums.",
+    )
+
+    stratify_by = "None"
+    max_strata = 4
+
+    if view_mode in ["Boxplot", "Violin"]:
+        use_log = st.sidebar.checkbox(
+            "Log scale (log10)",
+            value=True,
+            help="Applies log10 to positive values only.",
+        )
+        ranking_stat = None
+    else:
+        use_log = False
+        ranking_stat = st.sidebar.selectbox(
+            "Ranking statistic",
+            options=["Median", "Mean", "Total", "Count"],
+            index=0,
+        )
+
+        stratify_by = st.sidebar.selectbox(
+            "Stratify by",
+            options=[
+                "None",
+                "album_genre_group",
+                "film_genre_group",
+                "album_us_release_year",
+                "bafta_nominee",
+                "oscar_score_nominee",
+                "oscar_song_nominee",
+                "globes_score_nominee",
+                "globes_song_nominee",
+                "critics_score_nominee",
+                "critics_song_nominee",
+            ],
+            index=0,
+            format_func=lambda x: "None" if x == "None" else get_display_label(x),
+            help="Split each ranked bar into stacked segments by a second category.",
+        )
+
+        if stratify_by != "None":
+            max_strata = st.sidebar.slider(
+                "Maximum strata to display",
+                min_value=2,
+                max_value=8,
+                value=4,
+                step=1,
+                help="Keep only the largest strata and roll the rest into Others.",
+            )
+
+    show_table = st.sidebar.checkbox(
+        "Show data table",
+        value=False,
+    )
+
+    show_points = False
+    if view_mode in ["Boxplot", "Violin"]:
+        show_points = st.sidebar.checkbox(
+            "Show individual album points",
+            value=False,
+        )
+
+    genre_mode = "Collapsed genre groups"
+    if (
+        view_mode in ["Boxplot", "Violin"]
+        and group_var in ["album_genre_group", "film_genre_group"]
+    ):
+        genre_mode = st.sidebar.radio(
+            "Genre handling",
+            options=[
+                "Collapsed genre groups",
+                "Include albums in all matching genres",
+            ],
+            index=0,
+            help=(
+                "Collapsed genre groups keeps one genre label per album. "
+                "Include albums in all matching genres lets the same album "
+                "appear in multiple genre distributions."
+            ),
+        )
+
+    return {
+        "metric": metric,
+        "view_mode": view_mode,
+        "group_var": group_var,
+        "selected_groups": selected_groups,
+        "top_n": top_n,
+        "min_group_size": min_group_size,
+        "use_log": use_log,
+        "ranking_stat": ranking_stat,
+        "show_table": show_table,
+        "show_points": show_points,
+        "stratify_by": stratify_by,
+        "max_strata": max_strata,
+        "genre_mode": genre_mode,
     }
 
 # PAGE 4 Controls

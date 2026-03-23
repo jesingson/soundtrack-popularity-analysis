@@ -3,3 +3,4 @@ altair
 scipy
 statsmodels
 streamlit
+plotly

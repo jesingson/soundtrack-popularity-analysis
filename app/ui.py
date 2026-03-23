@@ -50,6 +50,7 @@ DISPLAY_LABELS = {
     "critics_song_nominee": "Critics Song Nominee",
     "bafta_score_nominee": "BAFTA Score Nominee",
     "film_year": "Film Year",
+    "plot_value": "Displayed Value",
 }
 
 
