@@ -6,7 +6,11 @@ import streamlit as st
 import data_processing as dp
 import regression_analysis as reg
 from app.app_controls import get_scatter_controls
-from app.app_data import load_analysis_data, load_source_data
+from app.app_data import (
+    load_analysis_data,
+    load_explorer_data,
+    load_source_data,
+)
 from app.ui import (
     apply_app_styles,
     get_display_label,
@@ -22,8 +26,20 @@ TOOLTIP_METADATA_CANDIDATES = [
     "album_us_release_year",
 ]
 
-EXCLUDED_NUMERIC_COLS = {
+EXCLUDED_EXPLORER_COLS = {
     "tmdb_id",
+    "barcode",
+    "rg_rating_count",
+    "film_ingested_at",
+    "match_method",
+    "matched_at",
+    "us_date_has_missing_month",
+    "us_date_has_missing_day",
+    "us_any_event_missing_month",
+    "us_any_event_missing_day",
+    "keep_row",
+    "vote_count_above_500",
+    "canonical_rule",
 }
 
 MAX_COLOR_CARDINALITY = 20
@@ -155,6 +171,17 @@ def pick_available_metadata_cols(
     """
     return [col for col in TOOLTIP_METADATA_CANDIDATES if col in albums_df.columns]
 
+def is_id_like_column(col_name: str) -> bool:
+    """Return True if a column name looks like an ID/key field."""
+    col = col_name.lower()
+    id_markers = [
+        "id",
+        "mbid",
+        "_key",
+        "spotify_",
+        "musicbrainz_",
+    ]
+    return any(marker in col for marker in id_markers)
 
 def derive_multi_label_group(
     df: pd.DataFrame,
@@ -198,38 +225,19 @@ def derive_multi_label_group(
 
 
 def build_relationship_explorer_df(
-    album_analytics_df: pd.DataFrame,
-    albums_df: pd.DataFrame,
-    metadata_cols: list[str],
+    explorer_source_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build a merged dataframe used by the freeform relationship explorer.
+    Build the dataframe used by the freeform relationship explorer.
 
     Args:
-        album_analytics_df: Analysis-ready album dataframe.
-        albums_df: Richer source album dataframe.
-        metadata_cols: Descriptive columns to preserve for tooltips.
+        explorer_source_df: Rich album-level exploration dataframe.
 
     Returns:
-        pd.DataFrame: Merged album-level explorer dataframe.
+        pd.DataFrame: Album-level freeform relationship dataframe with
+        derived grouping columns added.
     """
-    merge_cols = ["tmdb_id", "release_group_mbid"]
-    available_meta_cols = [c for c in metadata_cols if c in albums_df.columns]
-
-    right_cols = [
-        c for c in merge_cols + available_meta_cols
-        if c in albums_df.columns
-    ]
-    right_df = albums_df[right_cols].drop_duplicates()
-
-    explorer_df = album_analytics_df.merge(
-        right_df,
-        on=[
-            c for c in merge_cols
-            if c in album_analytics_df.columns and c in right_df.columns
-        ],
-        how="left",
-    )
+    explorer_df = explorer_source_df.copy()
 
     explorer_df = derive_multi_label_group(
         df=explorer_df,
@@ -266,27 +274,30 @@ def get_freeform_numeric_options(
 
     usable_cols = []
     for col in numeric_cols:
-        if col in EXCLUDED_NUMERIC_COLS:
+        if col in EXCLUDED_EXPLORER_COLS or is_id_like_column(col):
             continue
         if explorer_df[col].dropna().nunique() < 2:
             continue
         usable_cols.append(col)
 
     preferred_front = [
-        dp.TARGET_COL,
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+        "n_tracks",
+        "album_release_lag_days",
+        "days_since_album_release",
+        "days_since_film_release",
         "film_vote_count",
         "film_popularity",
         "film_rating",
-        "days_since_album_release",
-        "n_tracks",
-        "composer_album_count",
-        "days_since_film_release",
         "film_runtime_min",
         "film_budget",
         "film_revenue",
+        "composer_album_count",
         "us_score_nominee_count",
         "us_song_nominee_count",
         "bafta_nominee",
+        dp.TARGET_COL,
     ]
 
     ordered = [c for c in preferred_front if c in usable_cols]
@@ -318,16 +329,21 @@ def get_color_options(
         dtype = explorer_df[col].dtype
 
         if (
-            pd.api.types.is_object_dtype(dtype)
-            or isinstance(dtype, pd.CategoricalDtype)
+                pd.api.types.is_object_dtype(dtype)
+                or isinstance(dtype, pd.CategoricalDtype)
         ):
-            if 2 <= nunique <= MAX_COLOR_CARDINALITY:
+            if (
+                    col not in EXCLUDED_EXPLORER_COLS
+                    and not is_id_like_column(col)
+                    and 2 <= nunique <= MAX_COLOR_CARDINALITY
+            ):
                 color_candidates.append(col)
 
+
         elif pd.api.types.is_bool_dtype(dtype) or (
-            pd.api.types.is_numeric_dtype(dtype) and nunique <= 5
+                pd.api.types.is_numeric_dtype(dtype) and nunique <= 5
         ):
-            if col not in EXCLUDED_NUMERIC_COLS:
+            if col not in EXCLUDED_EXPLORER_COLS and not is_id_like_column(col):
                 color_candidates.append(col)
 
     preferred_front = [
@@ -877,6 +893,7 @@ def main() -> None:
 
     albums_df, _ = load_source_data()
     album_analytics_df = load_analysis_data()
+    explorer_source_df = load_explorer_data()
 
     ranking_df = reg.build_scatterplot_feature_ranking(
         album_analytics_df=album_analytics_df,
@@ -886,21 +903,26 @@ def main() -> None:
     rank_lookup = build_feature_rank_lookup(ranking_df)
 
     metadata_cols = pick_available_metadata_cols(albums_df)
+
     explorer_df = build_relationship_explorer_df(
-        album_analytics_df=album_analytics_df,
-        albums_df=albums_df,
-        metadata_cols=metadata_cols,
+        explorer_source_df=explorer_source_df,
     )
 
     guided_feature_options = ranking_df["feature"].tolist()
     freeform_numeric_options = get_freeform_numeric_options(explorer_df)
     color_options = get_color_options(explorer_df)
 
+    freeform_default_y = (
+        "lfm_album_listeners"
+        if "lfm_album_listeners" in freeform_numeric_options
+        else dp.TARGET_COL
+    )
+
     controls = get_scatter_controls(
         guided_feature_options=guided_feature_options,
         freeform_numeric_options=freeform_numeric_options,
         color_options=color_options,
-        default_y=dp.TARGET_COL,
+        default_y=freeform_default_y,
     )
 
     if controls["mode"] == "Guided":

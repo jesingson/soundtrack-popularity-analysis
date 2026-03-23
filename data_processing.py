@@ -194,6 +194,89 @@ def add_composer_album_count(
 
     return albums_df
 
+def add_release_lag_days(
+        albums_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Add the day difference between album and film release dates.
+
+    The derived column ``album_release_lag_days`` measures how many days
+    passed between the film release date and the album U.S. release date.
+
+    Interpretation:
+    - negative: album released before the film
+    - zero: same-day release
+    - positive: album released after the film
+
+    Args:
+        albums_df: Album-level dataframe containing release date columns.
+
+    Returns:
+        pd.DataFrame: Album dataframe with ``album_release_lag_days`` added.
+    """
+    albums_df = albums_df.copy()
+
+    film_dates = pd.to_datetime(
+        albums_df["film_release_date"],
+        errors="coerce",
+    )
+    album_dates = pd.to_datetime(
+        albums_df["album_us_release_date"],
+        errors="coerce",
+    )
+
+    albums_df["album_release_lag_days"] = (
+        album_dates - film_dates
+    ).dt.days
+
+    return albums_df
+
+def add_album_genres_display(
+        albums_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Build a human-readable album genre string from canonical genre flags.
+
+    This creates a pipe-delimited display column from the seven canonical
+    album genre indicator columns used in the analysis workflow.
+
+    Args:
+        albums_df: Album-level dataframe containing canonical genre flags.
+
+    Returns:
+        pd.DataFrame: Album dataframe with ``album_genres_display`` added.
+    """
+    albums_df = albums_df.copy()
+
+    genre_label_map = {
+        "ambient_experimental": "Ambient/Experimental",
+        "classical_orchestral": "Classical/Orchestral",
+        "electronic": "Electronic",
+        "hip_hop_rnb": "Hip-Hop/R&B",
+        "pop": "Pop",
+        "rock": "Rock",
+        "world_folk": "World/Folk",
+    }
+
+    genre_cols = list(genre_label_map.keys())
+
+    for col in genre_cols:
+        if col not in albums_df.columns:
+            albums_df[col] = 0
+
+    def build_genre_string(row: pd.Series) -> str:
+        labels = [
+            genre_label_map[col]
+            for col in genre_cols
+            if pd.notna(row[col]) and int(row[col]) == 1
+        ]
+        return "|".join(labels)
+
+    albums_df["album_genres_display"] = albums_df.apply(
+        build_genre_string,
+        axis=1,
+    )
+
+    return albums_df
+
 def normalize_genre_flags(
         albums_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -247,6 +330,37 @@ def select_analysis_columns(albums_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return albums_df[selected_cols]
+
+def build_album_explorer_dataset(
+        albums_df: pd.DataFrame,
+        wide_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Build a rich album-level dataframe for exploratory app pages.
+
+    This dataset is intended for user-facing exploration pages such as the
+    Dataset Explorer, Distribution Explorer, and Group Comparison Explorer.
+    It keeps the descriptive album metadata from the source CSV while adding
+    a small number of intuitive engineered features that are useful for
+    browsing, filtering, and sorting.
+
+    Unlike ``build_album_analytics()``, this function does not reduce the
+    dataframe to a narrow modeling feature set.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Enriched album-level exploration dataframe.
+    """
+    albums_df = add_track_counts(albums_df, wide_df)
+    albums_df = add_award_features(albums_df)
+    albums_df = add_composer_album_count(albums_df)
+    albums_df = add_release_lag_days(albums_df)
+    albums_df = normalize_genre_flags(albums_df)
+    albums_df = add_album_genres_display(albums_df)
+
+    return albums_df
 
 def build_album_analytics(
         albums_df: pd.DataFrame,

@@ -32,6 +32,27 @@ def load_source_data(
     )
     return albums_df, wide_df
 
+@st.cache_data
+def load_explorer_data(
+    album_file_path: str = "data/albums.csv",
+    wide_file_path: str = "data/wide.csv",
+) -> pd.DataFrame:
+    """
+    Load source CSVs and build the exploration-ready album dataframe.
+
+    Args:
+        album_file_path: Path to the album-level CSV.
+        wide_file_path: Path to the wide-format CSV.
+
+    Returns:
+        pd.DataFrame: Album-level exploration dataframe with descriptive
+        metadata and selected engineered features.
+    """
+    albums_df, wide_df = load_source_data(
+        album_file_path=album_file_path,
+        wide_file_path=wide_file_path,
+    )
+    return dp.build_album_explorer_dataset(albums_df, wide_df)
 
 @st.cache_data
 def load_analysis_data(

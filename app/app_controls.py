@@ -1,47 +1,107 @@
 import streamlit as st
 
-
-def get_correlation_controls() -> dict:
+# PAGE 1 Controls
+def get_dataset_controls(
+    min_year: int,
+    max_year: int,
+    film_genre_options: list[str],
+    album_genre_options: list[str],
+    composer_options: list[str],
+    label_options: list[str],
+) -> dict:
     """
-    Render sidebar controls for the correlation explorer.
+    Render sidebar controls for the dataset explorer.
+
+    Args:
+        min_year: Minimum film year available in the data.
+        max_year: Maximum film year available in the data.
+        film_genre_options: Sorted list of available film genre labels.
+        album_genre_options: Sorted list of available album genre labels.
+        composer_options: Sorted list of available composer names.
+        label_options: Sorted list of available label names.
 
     Returns:
         dict: Selected control values.
     """
-    st.sidebar.header("Correlation Controls")
+    st.sidebar.header("Dataset Controls")
 
-    method = st.sidebar.selectbox(
-        "Correlation method",
-        options=["pearson", "spearman"],
-        index=0,
-    )
-
-    top_n = st.sidebar.slider(
-        "Top N features for lollipop chart",
-        min_value=5,
-        max_value=25,
-        value=15,
+    year_range = st.sidebar.slider(
+        "Film year range",
+        min_value=min_year,
+        max_value=max_year,
+        value=(min_year, max_year),
         step=1,
     )
 
-    show_lollipop_table = st.sidebar.checkbox(
-        "Show lollipop data table",
-        value=False,
+    selected_film_genres = st.sidebar.multiselect(
+        "Film genres",
+        options=film_genre_options,
+        default=[],
+        help="Leave blank to include all film genres.",
     )
 
-    show_heatmap_table = st.sidebar.checkbox(
-        "Show heatmap source table",
-        value=False,
+    selected_album_genres = st.sidebar.multiselect(
+        "Album genres",
+        options=album_genre_options,
+        default=[],
+        help="Leave blank to include all album genres.",
+    )
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+        help="Leave blank to include all composers.",
+    )
+
+    selected_labels = st.sidebar.multiselect(
+        "Labels",
+        options=label_options,
+        default=[],
+        help="Leave blank to include all labels.",
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search album, film, composer, or label",
+        value="",
+        help=(
+            "Case-insensitive text search across album title, film title, "
+            "composer, and label."
+        ),
+    )
+
+    min_tracks = st.sidebar.slider(
+        "Minimum number of tracks",
+        min_value=1,
+        max_value=40,
+        value=1,
+        step=1,
+    )
+
+    listeners_only = st.sidebar.checkbox(
+        "Only show albums with Last.fm listener data",
+        value=True,
+    )
+
+    show_data_table = st.sidebar.checkbox(
+        "Show full filtered table",
+        value=True,
     )
 
     return {
-        "method": method,
-        "top_n": top_n,
-        "show_lollipop_table": show_lollipop_table,
-        "show_heatmap_table": show_heatmap_table,
+        "year_range": year_range,
+        "selected_film_genres": selected_film_genres,
+        "selected_album_genres": selected_album_genres,
+        "selected_composers": selected_composers,
+        "selected_labels": selected_labels,
+        "search_text": search_text,
+        "min_tracks": min_tracks,
+        "listeners_only": listeners_only,
+        "show_data_table": show_data_table,
     }
 
 
+# PAGE 4 Controls
 def get_scatter_controls(
     guided_feature_options: list[str],
     freeform_numeric_options: list[str],
@@ -187,7 +247,48 @@ def get_scatter_controls(
         "show_feature_ranking": show_feature_ranking,
     }
 
+# PAGE 8 Controls
+def get_correlation_controls() -> dict:
+    """
+    Render sidebar controls for the correlation explorer.
 
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Correlation Controls")
+
+    method = st.sidebar.selectbox(
+        "Correlation method",
+        options=["pearson", "spearman"],
+        index=0,
+    )
+
+    top_n = st.sidebar.slider(
+        "Top N features for lollipop chart",
+        min_value=5,
+        max_value=25,
+        value=15,
+        step=1,
+    )
+
+    show_lollipop_table = st.sidebar.checkbox(
+        "Show lollipop data table",
+        value=False,
+    )
+
+    show_heatmap_table = st.sidebar.checkbox(
+        "Show heatmap source table",
+        value=False,
+    )
+
+    return {
+        "method": method,
+        "top_n": top_n,
+        "show_lollipop_table": show_lollipop_table,
+        "show_heatmap_table": show_heatmap_table,
+    }
+
+# PAGE 9 Controls
 def get_regression_controls() -> dict:
     """
     Render sidebar controls for the regression explorer.
@@ -230,6 +331,7 @@ def get_regression_controls() -> dict:
         "show_model_summary": show_model_summary,
     }
 
+# PAGE 10 Controls
 def get_ridge_controls(
     preset_labels: dict[str, str],
     preset_keys: list[str],
