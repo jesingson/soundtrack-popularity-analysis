@@ -51,6 +51,21 @@ DISPLAY_LABELS = {
     "bafta_score_nominee": "BAFTA Score Nominee",
     "film_year": "Film Year",
     "plot_value": "Displayed Value",
+    "group": "Group",
+    "album_count": "Album Count",
+    "total_metric": "Total Metric",
+    "mean_metric": "Mean Metric",
+    "median_metric": "Median Metric",
+    "top_1_share": "Top 1 Share",
+    "top_3_share": "Top 3 Share",
+    "top_5_share": "Top 5 Share",
+    "gini": "Gini",
+    "rank_within_group": "Rank Within Group",
+    "share_of_group_total": "Share of Group Total",
+    "cumulative_share": "Cumulative Share",
+    "film_genre_group": "Film Genre",
+    "album_genre_group": "Album Genre",
+    "award_category": "Award Category",
 }
 
 

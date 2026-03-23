@@ -546,6 +546,134 @@ def get_scatter_controls(
         "show_feature_ranking": show_feature_ranking,
     }
 
+# PAGE 5 controls
+def get_concentration_controls(
+    metric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+) -> dict:
+    """
+    Render sidebar controls for the Concentration Explorer.
+
+    Args:
+        metric_options: Numeric album-level metrics eligible for
+            concentration analysis.
+        group_options: Grouping fields eligible for concentration analysis.
+        group_value_options_map: Mapping from grouping field to selectable
+            group values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Concentration Controls")
+
+    metric = st.sidebar.selectbox(
+        "Album performance metric",
+        options=metric_options,
+        index=0,
+        format_func=get_display_label,
+        help=(
+            "Choose the album-level performance measure used to compute "
+            "group totals, Top-K shares, and Gini."
+        ),
+    )
+
+    group_var = st.sidebar.selectbox(
+        "Group by",
+        options=group_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    selected_groups = st.sidebar.multiselect(
+        f"Select {get_display_label(group_var)} values",
+        options=group_value_options_map.get(group_var, []),
+        default=[],
+        help=(
+            "Type to search specific values. Leave blank to use the top N "
+            "groups by album count."
+        ),
+    )
+
+    top_n = None
+    if not selected_groups:
+        top_n = st.sidebar.slider(
+            "Top N groups to display",
+            min_value=3,
+            max_value=20,
+            value=8,
+            step=1,
+        )
+
+    min_group_size = st.sidebar.slider(
+        "Minimum albums per group",
+        min_value=2,
+        max_value=20,
+        value=3,
+        step=1,
+    )
+
+    ranking_metric = st.sidebar.selectbox(
+        "Group ranking statistic",
+        options=[
+            "total_metric",
+            "gini",
+            "top_1_share",
+            "top_3_share",
+            "top_5_share",
+        ],
+        index=1,
+        format_func=get_display_label,
+        help=(
+            "Total Metric, Top-K Share, and Gini are computed from the "
+            "selected album performance metric."
+        ),
+    )
+
+    default_lorenz_groups = selected_groups[:6] if selected_groups else []
+    lorenz_groups = st.sidebar.multiselect(
+        "Lorenz curve groups",
+        options=group_value_options_map.get(group_var, []),
+        default=[],
+        max_selections=6,
+        help=(
+            "Choose up to 6 displayed groups for the Lorenz curve. "
+            "If left blank, the top 6 displayed groups by the selected "
+            "group ranking statistic will be used."
+        ),
+    )
+
+    histogram_bins = st.sidebar.slider(
+        "Histogram bins",
+        min_value=8,
+        max_value=30,
+        value=16,
+        step=1,
+    )
+
+    show_summary_table = st.sidebar.checkbox(
+        "Show concentration summary table",
+        value=True,
+    )
+
+    show_detail_table = st.sidebar.checkbox(
+        "Show group drilldown table",
+        value=True,
+    )
+
+    return {
+        "metric": metric,
+        "group_var": group_var,
+        "selected_groups": selected_groups,
+        "top_n": top_n,
+        "min_group_size": min_group_size,
+        "ranking_metric": ranking_metric,
+        "lorenz_groups": lorenz_groups,
+        "histogram_bins": histogram_bins,
+        "show_summary_table": show_summary_table,
+        "show_detail_table": show_detail_table,
+    }
+
 # PAGE 8 Controls
 def get_correlation_controls() -> dict:
     """

@@ -158,6 +158,64 @@ def add_award_features(albums_df: pd.DataFrame) -> pd.DataFrame:
 
     return albums_df
 
+def derive_award_category(df: pd.DataFrame) -> pd.Series:
+    """
+    Create a mutually exclusive award category per album.
+
+    Ensures each album is assigned to exactly one category using a
+    priority hierarchy:
+    - Oscars first (most prestigious)
+    - Winners before nominees
+    - Score before Song
+    """
+
+    def assign(row):
+        # Oscars - Score
+        if row["oscar_score_winner"] == 1:
+            return "Oscar Score Winner"
+        if row["oscar_score_nominee"] == 1:
+            return "Oscar Score Nominee"
+
+        # Oscars - Song
+        if row["oscar_song_winner"] == 1:
+            return "Oscar Song Winner"
+        if row["oscar_song_nominee"] == 1:
+            return "Oscar Song Nominee"
+
+        # BAFTA - Score
+        if row["bafta_score_winner"] == 1:
+            return "BAFTA Score Winner"
+        if row["bafta_score_nominee"] == 1:
+            return "BAFTA Score Nominee"
+
+        # Golden Globes - Score
+        if row["globes_score_winner"] == 1:
+            return "Golden Globe Score Winner"
+        if row["globes_score_nominee"] == 1:
+            return "Golden Globe Score Nominee"
+
+        # Golden Globes - Song
+        if row["globes_song_winner"] == 1:
+            return "Golden Globe Song Winner"
+        if row["globes_song_nominee"] == 1:
+            return "Golden Globe Song Nominee"
+
+        # Critics - Score
+        if row["critics_score_winner"] == 1:
+            return "Critics Score Winner"
+        if row["critics_score_nominee"] == 1:
+            return "Critics Score Nominee"
+
+        # Critics - Song
+        if row["critics_song_winner"] == 1:
+            return "Critics Song Winner"
+        if row["critics_song_nominee"] == 1:
+            return "Critics Song Nominee"
+
+        return "No Major Award"
+
+    return df.apply(assign, axis=1)
+
 def add_composer_album_count(
         albums_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -338,10 +396,11 @@ def build_album_explorer_dataset(
     """Build a rich album-level dataframe for exploratory app pages.
 
     This dataset is intended for user-facing exploration pages such as the
-    Dataset Explorer, Distribution Explorer, and Group Comparison Explorer.
-    It keeps the descriptive album metadata from the source CSV while adding
-    a small number of intuitive engineered features that are useful for
-    browsing, filtering, and sorting.
+    Dataset Explorer, Distribution Explorer, Group Comparison Explorer,
+    Relationship Explorer, and Concentration Explorer. It keeps the
+    descriptive album metadata from the source CSV while adding a small
+    number of intuitive engineered features that are useful for browsing,
+    filtering, sorting, and group-level comparison.
 
     Unlike ``build_album_analytics()``, this function does not reduce the
     dataframe to a narrow modeling feature set.
@@ -355,6 +414,7 @@ def build_album_explorer_dataset(
     """
     albums_df = add_track_counts(albums_df, wide_df)
     albums_df = add_award_features(albums_df)
+    albums_df["award_category"] = derive_award_category(albums_df)
     albums_df = add_composer_album_count(albums_df)
     albums_df = add_release_lag_days(albums_df)
     albums_df = normalize_genre_flags(albums_df)
