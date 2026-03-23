@@ -1,4 +1,5 @@
 import streamlit as st
+from app.ui import get_display_label
 
 # PAGE 1 Controls
 def get_dataset_controls(
@@ -100,6 +101,98 @@ def get_dataset_controls(
         "show_data_table": show_data_table,
     }
 
+# PAGE 2 Controls
+def get_distribution_controls(
+    numeric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+) -> dict:
+    """
+    Render sidebar controls for the Distribution Explorer.
+
+    Args:
+        numeric_options: Numeric columns eligible for distribution analysis.
+        group_options: Grouping fields eligible for comparison.
+        group_value_options_map: Mapping from grouping field to selectable
+            group values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Distribution Controls")
+
+    metric = st.sidebar.selectbox(
+        "Metric",
+        options=numeric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    view_type = st.sidebar.selectbox(
+        "View type",
+        options=["Histogram", "Density", "CDF"],
+        index=0,
+    )
+
+    use_log = st.sidebar.checkbox(
+        "Log scale (log10)",
+        value=True,
+        help="Applies log10 to positive values only.",
+    )
+
+    group_var = st.sidebar.selectbox(
+        "Group by",
+        options=["None"] + group_options,
+        index=0,
+        format_func=lambda x: "None" if x == "None" else get_display_label(x),
+    )
+
+    selected_groups = []
+    top_n = None
+
+    if group_var != "None":
+        selected_groups = st.sidebar.multiselect(
+            f"Select {get_display_label(group_var)} values",
+            options=group_value_options_map.get(group_var, []),
+            default=[],
+            help=(
+                "Type to search specific values. Leave blank to use the top N "
+                "groups by album count."
+            ),
+        )
+
+        if not selected_groups:
+            top_n = st.sidebar.slider(
+                "Top N groups",
+                min_value=3,
+                max_value=15,
+                value=8,
+                step=1,
+            )
+
+    bins = st.sidebar.slider(
+        "Bins",
+        min_value=20,
+        max_value=100,
+        value=40,
+        step=5,
+    )
+
+    show_table = st.sidebar.checkbox(
+        "Show data table",
+        value=False,
+    )
+
+    return {
+        "metric": metric,
+        "view_type": view_type,
+        "use_log": use_log,
+        "group_var": group_var,
+        "selected_groups": selected_groups,
+        "top_n": top_n,
+        "bins": bins,
+        "show_table": show_table,
+    }
 
 # PAGE 4 Controls
 def get_scatter_controls(
@@ -137,6 +230,7 @@ def get_scatter_controls(
             "X-axis feature",
             options=guided_feature_options,
             index=0,
+            format_func=get_display_label,
         )
 
         show_trendline = st.sidebar.checkbox(
@@ -169,18 +263,21 @@ def get_scatter_controls(
             "X-axis",
             options=freeform_numeric_options,
             index=default_x_index,
+            format_func=get_display_label,
         )
 
         y_col = st.sidebar.selectbox(
             "Y-axis",
             options=freeform_numeric_options,
             index=default_y_index,
+            format_func=get_display_label,
         )
 
         color_col = st.sidebar.selectbox(
             "Color grouping",
             options=["None"] + color_options,
             index=0,
+            format_func=lambda x: "None" if x == "None" else get_display_label(x),
         )
 
         st.sidebar.markdown("---")
@@ -376,6 +473,7 @@ def get_ridge_controls(
                 f for f in default_custom_features
                 if f in all_available_features
             ],
+            format_func=get_display_label,
         )
     else:
         selected_features = []
