@@ -7,7 +7,11 @@ import streamlit as st
 
 from app.app_controls import get_dataset_controls
 from app.app_data import load_explorer_data
-
+from app.ui import (
+    apply_app_styles,
+    get_display_label,
+    rename_columns_for_display,
+)
 
 DISPLAY_COLUMNS = [
     "album_title",
@@ -37,37 +41,6 @@ DISPLAY_COLUMNS = [
     "days_since_film_release",
     "days_since_album_release",
 ]
-
-DISPLAY_LABELS = {
-    "album_title": "Album",
-    "film_title": "Film",
-    "film_release_date": "Film Release Date",
-    "album_us_release_date": "Album Release Date",
-    "album_release_lag_days": "Album vs Film Lag (Days)",
-    "composer_primary_clean": "Composer",
-    "label_names": "Label",
-    "film_genres": "Film Genres",
-    "album_genres_display": "Album Genres",
-    "lfm_album_listeners": "Album Listeners",
-    "lfm_album_playcount": "Album Playcount",
-    "n_tracks": "Tracks",
-    "composer_album_count": "Composer Album Count",
-    "us_score_nominee_count": "U.S. Score Noms",
-    "us_song_nominee_count": "U.S. Song Noms",
-    "bafta_nominee": "BAFTA Nominee",
-    "oscar_score_nominee": "Oscar Score Nominee",
-    "oscar_song_nominee": "Oscar Song Nominee",
-    "globes_score_nominee": "Globes Score Nominee",
-    "globes_song_nominee": "Globes Song Nominee",
-    "critics_score_nominee": "Critics Score Nominee",
-    "critics_song_nominee": "Critics Song Nominee",
-    "bafta_score_nominee": "BAFTA Score Nominee",
-    "bafta_score_nominee": "BAFTA Score Nom",
-    "film_year": "Film Year",
-    "days_since_film_release": "Days Since Film Release",
-    "days_since_album_release": "Days Since Album Release",
-}
-
 
 def split_multivalue_genres(series: pd.Series) -> list[str]:
     """Extract unique genre values from pipe- or comma-delimited strings."""
@@ -185,15 +158,8 @@ def get_safe_display_columns(df: pd.DataFrame) -> list[str]:
 def format_display_df(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     """Prepare the filtered dataframe for display."""
     display_df = df[columns].copy()
-
-    rename_map = {
-        col: DISPLAY_LABELS[col]
-        for col in columns
-        if col in DISPLAY_LABELS
-    }
-    display_df = display_df.rename(columns=rename_map)
+    display_df = rename_columns_for_display(display_df)
     display_df = format_date_columns(display_df)
-
     return display_df
 
 def format_date_columns(display_df: pd.DataFrame) -> pd.DataFrame:
@@ -216,6 +182,7 @@ def format_date_columns(display_df: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     """Render the Dataset Explorer page."""
+    apply_app_styles()
     st.title("Dataset Explorer")
     st.write(
         """
@@ -308,7 +275,7 @@ def main() -> None:
         "Choose columns to display",
         options=default_display_columns,
         default=default_selected_columns,
-        format_func=lambda col: DISPLAY_LABELS.get(col, col),
+        format_func=get_display_label,
     )
 
     if not selected_columns:

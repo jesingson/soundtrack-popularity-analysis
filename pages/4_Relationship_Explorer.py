@@ -884,10 +884,12 @@ def main() -> None:
     st.title("Relationship Explorer")
     st.write(
         """
-        Explore album-level relationships in two ways. Guided mode keeps the
-        original regression-oriented feature ranking against
-        `log_lfm_album_listeners`. Freeform mode lets you choose any safe
-        album-level numeric X and Y fields, plus an optional color grouping.
+        Explore album-level relationships in two ways. Guided mode follows the
+        regression-oriented feature ranking against `log_lfm_album_listeners`.
+        Freeform mode lets you compare any safe album-level numeric X and Y
+        fields, with an optional color grouping.
+
+        Each point represents one album.
         """
     )
 

@@ -34,6 +34,22 @@ DISPLAY_LABELS = {
     "film_title": "Film Title",
     "tmdb_id": "TMDB ID",
     "release_group_mbid": "Release Group MBID",
+    "lfm_album_listeners": "Album Listeners",
+    "lfm_album_playcount": "Album Playcount",
+    "label_names": "Label",
+    "film_genres": "Film Genres",
+    "album_genres_display": "Album Genres",
+    "album_release_lag_days": "Album vs Film Lag (Days)",
+    "film_release_date": "Film Release Date",
+    "album_us_release_date": "Album Release Date",
+    "oscar_score_nominee": "Oscar Score Nominee",
+    "oscar_song_nominee": "Oscar Song Nominee",
+    "globes_score_nominee": "Globes Score Nominee",
+    "globes_song_nominee": "Globes Song Nominee",
+    "critics_score_nominee": "Critics Score Nominee",
+    "critics_song_nominee": "Critics Song Nominee",
+    "bafta_score_nominee": "BAFTA Score Nominee",
+    "film_year": "Film Year",
 }
 
 
