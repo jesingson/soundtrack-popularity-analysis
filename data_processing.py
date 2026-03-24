@@ -449,6 +449,227 @@ def build_album_analytics(
 
     return album_analytics_df
 
+def _get_track_album_metadata(
+        albums_df: pd.DataFrame,
+        wide_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Build the album-level metadata slice needed for the track explorer.
+
+    This helper reuses the existing album exploration enrichment pipeline so
+    the track explorer inherits the same intuitive browsing and filtering
+    fields already used elsewhere in the app.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Album-level metadata restricted to the columns needed
+        by the track explorer.
+    """
+    album_explorer_df = build_album_explorer_dataset(albums_df, wide_df).copy()
+
+    metadata_cols = [
+        "tmdb_id",
+        "release_group_mbid",
+        "album_title",
+        "film_title",
+        "composer_primary_clean",
+        "label_names",
+        "film_year",
+        "film_genres",
+        "album_genres_display",
+        "award_category",
+        "n_tracks",
+        "album_release_lag_days",
+        "composer_album_count",
+        "ambient_experimental",
+        "classical_orchestral",
+        "electronic",
+        "hip_hop_rnb",
+        "pop",
+        "rock",
+        "world_folk",
+    ]
+
+    existing_cols = [
+        col for col in metadata_cols
+        if col in album_explorer_df.columns
+    ]
+
+    return album_explorer_df[existing_cols].copy()
+
+
+def _prepare_track_base(
+        wide_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Build a cleaned one-row-per-track base dataframe from the wide dataset.
+
+    The goal is to keep the track explorer at true track grain while
+    standardizing core track fields needed for later positional charts and
+    album-level cohesion rollups.
+
+    Args:
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Cleaned track-level dataframe with one row per track.
+    """
+    track_cols = [
+        "tmdb_id",
+        "release_group_mbid",
+        "track_id",
+        "track_number",
+        "track_title",
+        "lfm_track_listeners",
+        "lfm_track_playcount",
+        "spotify_popularity",
+        "log_lfm_track_listeners",
+        "log_lfm_track_playcount",
+    ]
+
+    existing_cols = [col for col in track_cols if col in wide_df.columns]
+    track_df = wide_df[existing_cols].copy()
+
+    track_df["track_number"] = pd.to_numeric(
+        track_df["track_number"],
+        errors="coerce",
+    )
+
+    track_df = track_df.dropna(
+        subset=["tmdb_id", "release_group_mbid", "track_number"]
+    ).copy()
+
+    track_df = track_df[track_df["track_number"] >= 1].copy()
+    track_df["track_number"] = track_df["track_number"].astype(int)
+
+    if "track_title" in track_df.columns:
+        track_df["track_title"] = (
+            track_df["track_title"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+    dedupe_key = [
+        "tmdb_id",
+        "release_group_mbid",
+        "track_number",
+    ]
+
+    sort_cols = dedupe_key.copy()
+    if "lfm_track_listeners" in track_df.columns:
+        sort_cols.append("lfm_track_listeners")
+
+    ascending = [True, True, True]
+    if "lfm_track_listeners" in track_df.columns:
+        ascending.append(False)
+
+    track_df = (
+        track_df.sort_values(sort_cols, ascending=ascending)
+        .drop_duplicates(subset=dedupe_key, keep="first")
+        .copy()
+    )
+
+    return track_df
+
+
+def _add_track_structure_fields(
+        track_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Add reusable track-structure helper columns.
+
+    Args:
+        track_df: Cleaned track-level dataframe with observed track counts.
+
+    Returns:
+        pd.DataFrame: Track dataframe with helper columns added.
+    """
+    track_df = track_df.copy()
+
+    track_df["is_first_track"] = track_df["track_number"] == 1
+    track_df["is_last_track"] = (
+        track_df["track_number"] == track_df["max_track_number_observed"]
+    )
+
+    track_df["track_position_pct"] = 0.0
+
+    valid_denominator = track_df["max_track_number_observed"] > 1
+    track_df.loc[valid_denominator, "track_position_pct"] = (
+        (track_df.loc[valid_denominator, "track_number"] - 1)
+        / (track_df.loc[valid_denominator, "max_track_number_observed"] - 1)
+    )
+
+    return track_df
+
+
+def build_track_explorer_dataset(
+        albums_df: pd.DataFrame,
+        wide_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Build a rich track-level dataframe for the Track Structure Explorer.
+
+    This dataset keeps one row per track while attaching the album metadata
+    needed for shared filtering, grouping, display, and tooltips. It is the
+    base dataframe for Page 6 and is intentionally exploratory rather than
+    modeling-focused.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Enriched track-level exploration dataframe.
+    """
+    album_metadata_df = _get_track_album_metadata(albums_df, wide_df)
+    track_df = _prepare_track_base(wide_df)
+
+    observed_counts_df = (
+        track_df.groupby(
+            ["release_group_mbid", "tmdb_id"],
+            as_index=False,
+        )
+        .agg(
+            track_count_observed=("track_number", "nunique"),
+            max_track_number_observed=("track_number", "max"),
+        )
+    )
+
+    track_df = track_df.merge(
+        observed_counts_df,
+        on=["release_group_mbid", "tmdb_id"],
+        how="left",
+        validate="m:1",
+    )
+
+    track_df = track_df.merge(
+        album_metadata_df,
+        on=["release_group_mbid", "tmdb_id"],
+        how="left",
+        validate="m:1",
+    )
+
+    track_df = _add_track_structure_fields(track_df)
+
+    sort_cols = [
+        col for col in [
+            "film_title",
+            "album_title",
+            "release_group_mbid",
+            "tmdb_id",
+            "track_number",
+        ]
+        if col in track_df.columns
+    ]
+
+    if sort_cols:
+        track_df = track_df.sort_values(sort_cols).reset_index(drop=True)
+
+    return track_df
 
 def inspect_genre_columns(albums_df: pd.DataFrame) -> None:
     """
