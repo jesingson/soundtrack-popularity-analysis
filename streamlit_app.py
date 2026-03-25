@@ -2,6 +2,21 @@ import streamlit as st
 
 from app.ui import apply_app_styles
 
+
+def render_home() -> None:
+    """Render the landing page for the app."""
+    st.title("Soundtrack Popularity Explorer")
+    st.write(
+        """
+        Interactive Streamlit companion to the soundtrack popularity analysis
+        project.
+
+        Use the navigation in the left sidebar to explore album-level patterns,
+        statistical modeling results, and track-focused analysis.
+        """
+    )
+
+
 st.set_page_config(
     page_title="Soundtrack Popularity Explorer",
     layout="wide",
@@ -9,13 +24,41 @@ st.set_page_config(
 
 apply_app_styles()
 
-st.title("Soundtrack Popularity Explorer")
-st.write(
-    """
-    Interactive Streamlit companion to the soundtrack popularity analysis project.
-
-    Use the pages in the left sidebar to explore the album-level dataset,
-    compare distributions, examine relationships, and review statistical
-    modeling results.
-    """
+navigation = st.navigation(
+    {
+        "⚪ Home": [
+            st.Page(
+                render_home,
+                title="Overview",
+                default=True,
+            ),
+        ],
+        "🟦 Album Analysis": [
+            st.Page("pages/1_Dataset_Explorer.py", title="Dataset Explorer"),
+            st.Page("pages/2_Distribution_Explorer.py", title="Distribution Explorer"),
+            st.Page(
+                "pages/3_Group_Comparison_Explorer.py",
+                title="Group Comparison Explorer",
+            ),
+            st.Page("pages/4_Relationship_Explorer.py", title="Relationship Explorer"),
+            st.Page("pages/5_Concentration_Explorer.py", title="Concentration Explorer"),
+        ],
+        "🟪 Modeling & Statistical Analysis": [
+            st.Page("pages/8_Correlation_Explorer.py", title="Correlation Explorer"),
+            st.Page("pages/9_Ridge_Explorer.py", title="Ridge Explorer"),
+            st.Page("pages/10_Regression_Explorer.py", title="Regression Explorer"),
+        ],
+        "🟩 Track Analysis": [
+            st.Page(
+                "pages/20_Track_Structure_Explorer.py",
+                title="Track Structure Explorer",
+            ),
+            st.Page(
+                "pages/21_Track_Album_Relationship_Explorer.py",
+                title="Track–Album Relationship Explorer",
+            ),
+        ],
+    }
 )
+
+navigation.run()

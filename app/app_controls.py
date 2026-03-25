@@ -674,190 +674,7 @@ def get_concentration_controls(
         "show_detail_table": show_detail_table,
     }
 
-# PAGE 6 Controls
-def get_track_structure_controls(
-    metric_options: list[str],
-    color_options: list[str],
-    composer_options: list[str],
-) -> dict:
-    """
-    Render sidebar controls for the Track Structure Explorer.
 
-    Args:
-        metric_options: Track-level numeric metrics eligible for analysis.
-        color_options: Optional categorical fields available for scatter
-            color encoding.
-        composer_options: Available composer names for optional filtering.
-
-    Returns:
-        dict: Selected control values.
-    """
-    st.sidebar.header("Track Structure Controls")
-
-    metric = st.sidebar.selectbox(
-        "Track performance metric",
-        options=metric_options,
-        index=0,
-        format_func=get_display_label,
-    )
-
-    transform_y = st.sidebar.selectbox(
-        "Transform Y",
-        options=["None", "Log1p"],
-        index=1,
-        help="Apply log1p to positive values for display and summaries.",
-    )
-
-    max_track_position = st.sidebar.slider(
-        "Maximum track position",
-        min_value=5,
-        max_value=40,
-        value=20,
-        step=1,
-        help="Restrict analysis to earlier track positions if desired.",
-    )
-
-    min_tracks_per_album = st.sidebar.slider(
-        "Minimum tracks per album",
-        min_value=1,
-        max_value=30,
-        value=5,
-        step=1,
-        help="Exclude very short albums from the track-structure analysis.",
-    )
-
-    selected_composers = st.sidebar.multiselect(
-        "Composers to compare",
-        options=composer_options,
-        default=[],
-        max_selections=12,
-        help=(
-            "Optionally limit the page to a focused set of composers. "
-            "Leave blank to include all composers."
-        ),
-    )
-
-    summary_stat = st.sidebar.selectbox(
-        "Summary statistic",
-        options=["Median", "Mean", "Both"],
-        index=0,
-    )
-
-    show_ribbon = st.sidebar.checkbox(
-        "Show interquartile ribbon",
-        value=True,
-        help="Display the 25th to 75th percentile band around the summary.",
-    )
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Scatter controls")
-
-    if selected_composers:
-        st.sidebar.info(
-            "Scatterplot colors are locked to composer when composers are selected."
-        )
-        color_col = "composer_primary_clean"
-    else:
-        color_col = st.sidebar.selectbox(
-            "Color grouping",
-            options=["None"] + color_options,
-            index=0,
-            format_func=lambda x: "None" if x == "None" else get_display_label(x),
-        )
-
-    apply_jitter = st.sidebar.checkbox(
-        "Jitter points",
-        value=True,
-        help="Adds small horizontal offsets to reduce overplotting.",
-    )
-
-    if apply_jitter:
-        jitter_strength = st.sidebar.slider(
-            "Jitter strength",
-            min_value=0.00,
-            max_value=0.30,
-            value=0.25,
-            step=0.01,
-        )
-    else:
-        jitter_strength = 0.0
-
-    show_trendline = st.sidebar.checkbox(
-        "Show fitted line",
-        value=False,
-    )
-
-    show_scatter = st.sidebar.checkbox(
-        "Show scatterplot",
-        value=True,
-    )
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Album cohesion controls")
-
-    cohesion_metric = st.sidebar.selectbox(
-        "Cohesion metric",
-        options=[
-            "top_track_share",
-            "top_track_to_median_ratio",
-            "track_metric_std_dev",
-        ],
-        index=1,
-        format_func=get_display_label,
-        help=(
-            "Rank albums by how concentrated or uneven track performance is "
-            "within the soundtrack."
-        ),
-    )
-
-    top_n_albums = st.sidebar.slider(
-        "Top N albums",
-        min_value=5,
-        max_value=25,
-        value=15,
-        step=1,
-    )
-
-    show_cohesion_table = st.sidebar.checkbox(
-        "Show cohesion table",
-        value=False,
-    )
-
-    show_album_track_table = st.sidebar.checkbox(
-        "Show album drilldown table",
-        value=False,
-    )
-
-    show_summary_table = st.sidebar.checkbox(
-        "Show position summary table",
-        value=False,
-    )
-
-    show_track_table = st.sidebar.checkbox(
-        "Show filtered track table",
-        value=False,
-    )
-
-    return {
-        "metric": metric,
-        "transform_y": transform_y,
-        "max_track_position": max_track_position,
-        "min_tracks_per_album": min_tracks_per_album,
-        "selected_composers": selected_composers,
-        "summary_stat": summary_stat,
-        "show_ribbon": show_ribbon,
-        "color_col": color_col,
-        "apply_jitter": apply_jitter,
-        "jitter_strength": jitter_strength,
-        "show_trendline": show_trendline,
-        "show_scatter": show_scatter,
-        "show_summary_table": show_summary_table,
-        "show_track_table": show_track_table,
-        "cohesion_metric": cohesion_metric,
-        "top_n_albums": top_n_albums,
-        "show_cohesion_table": show_cohesion_table,
-        "show_album_track_table": show_album_track_table,
-    }
 
 # PAGE 8 Controls
 def get_correlation_controls() -> dict:
@@ -1043,4 +860,323 @@ def get_ridge_controls(
         "show_order_table": show_order_table,
         "show_density_table": show_density_table,
         "show_ridge_long_sample": show_ridge_long_sample,
+    }
+
+
+# PAGE 20 Controls
+def get_track_structure_controls(
+    metric_options: list[str],
+    color_options: list[str],
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Structure Explorer.
+
+    Args:
+        metric_options: Track-level numeric metrics eligible for analysis.
+        color_options: Optional categorical fields available for scatter
+            color encoding.
+        composer_options: Available composer names for optional filtering.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Structure Controls")
+
+    metric = st.sidebar.selectbox(
+        "Track performance metric",
+        options=metric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    transform_y = st.sidebar.selectbox(
+        "Transform Y",
+        options=["None", "Log1p"],
+        index=1,
+        help="Apply log1p to positive values for display and summaries.",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+        help="Restrict analysis to earlier track positions if desired.",
+    )
+
+    min_tracks_per_album = st.sidebar.slider(
+        "Minimum tracks per album",
+        min_value=1,
+        max_value=30,
+        value=5,
+        step=1,
+        help="Exclude very short albums from the track-structure analysis.",
+    )
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers to compare",
+        options=composer_options,
+        default=[],
+        max_selections=12,
+        help=(
+            "Optionally limit the page to a focused set of composers. "
+            "Leave blank to include all composers."
+        ),
+    )
+
+    summary_stat = st.sidebar.selectbox(
+        "Summary statistic",
+        options=["Median", "Mean", "Both"],
+        index=0,
+    )
+
+    show_ribbon = st.sidebar.checkbox(
+        "Show interquartile ribbon",
+        value=True,
+        help="Display the 25th to 75th percentile band around the summary.",
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Scatter controls")
+
+    if selected_composers:
+        st.sidebar.info(
+            "Scatterplot colors are locked to composer when composers are selected."
+        )
+        color_col = "composer_primary_clean"
+    else:
+        color_col = st.sidebar.selectbox(
+            "Color grouping",
+            options=["None"] + color_options,
+            index=0,
+            format_func=lambda x: "None" if x == "None" else get_display_label(x),
+        )
+
+    apply_jitter = st.sidebar.checkbox(
+        "Jitter points",
+        value=True,
+        help="Adds small horizontal offsets to reduce overplotting.",
+    )
+
+    if apply_jitter:
+        jitter_strength = st.sidebar.slider(
+            "Jitter strength",
+            min_value=0.00,
+            max_value=0.30,
+            value=0.25,
+            step=0.01,
+        )
+    else:
+        jitter_strength = 0.0
+
+    show_trendline = st.sidebar.checkbox(
+        "Show fitted line",
+        value=False,
+    )
+
+    show_scatter = st.sidebar.checkbox(
+        "Show scatterplot",
+        value=True,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Album cohesion controls")
+
+    cohesion_metric = st.sidebar.selectbox(
+        "Cohesion metric",
+        options=[
+            "top_track_share",
+            "top_track_to_median_ratio",
+            "track_metric_std_dev",
+        ],
+        index=1,
+        format_func=get_display_label,
+        help=(
+            "Rank albums by how concentrated or uneven track performance is "
+            "within the soundtrack."
+        ),
+    )
+
+    top_n_albums = st.sidebar.slider(
+        "Top N albums",
+        min_value=5,
+        max_value=25,
+        value=15,
+        step=1,
+    )
+
+    show_cohesion_table = st.sidebar.checkbox(
+        "Show cohesion table",
+        value=False,
+    )
+
+    show_album_track_table = st.sidebar.checkbox(
+        "Show album drilldown table",
+        value=False,
+    )
+
+    show_summary_table = st.sidebar.checkbox(
+        "Show position summary table",
+        value=False,
+    )
+
+    show_track_table = st.sidebar.checkbox(
+        "Show filtered track table",
+        value=False,
+    )
+
+    return {
+        "metric": metric,
+        "transform_y": transform_y,
+        "max_track_position": max_track_position,
+        "min_tracks_per_album": min_tracks_per_album,
+        "selected_composers": selected_composers,
+        "summary_stat": summary_stat,
+        "show_ribbon": show_ribbon,
+        "color_col": color_col,
+        "apply_jitter": apply_jitter,
+        "jitter_strength": jitter_strength,
+        "show_trendline": show_trendline,
+        "show_scatter": show_scatter,
+        "show_summary_table": show_summary_table,
+        "show_track_table": show_track_table,
+        "cohesion_metric": cohesion_metric,
+        "top_n_albums": top_n_albums,
+        "show_cohesion_table": show_cohesion_table,
+        "show_album_track_table": show_album_track_table,
+    }
+
+# Page 21 Controls
+def get_track_album_relationship_controls(
+    min_year: int,
+    max_year: int,
+    album_genre_options: list[str],
+    film_genre_options: list[str],
+    composer_options: list[str],
+    label_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track–Album Relationship Explorer.
+
+    Args:
+        min_year: Minimum film year available in the filtered data.
+        max_year: Maximum film year available in the filtered data.
+        album_genre_options: Available album genre group labels.
+        film_genre_options: Available film genre group labels.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track–Album Controls")
+
+    comparison_metric = st.sidebar.selectbox(
+        "Comparison metric",
+        options=["listeners", "playcount"],
+        index=0,
+        format_func=lambda x: "Listeners" if x == "listeners" else "Playcount",
+        help=(
+            "Compare album-level and track-level Last.fm metrics using either "
+            "listeners or playcount."
+        ),
+    )
+
+    track_aggregation = st.sidebar.selectbox(
+        "Track aggregation",
+        options=["max", "mean", "median", "top3"],
+        index=0,
+        format_func=lambda x: {
+            "max": "Top track",
+            "mean": "Mean track",
+            "median": "Median track",
+            "top3": "Top 3 sum",
+        }[x],
+        help=(
+            "Choose how track performance should be summarized at the album level."
+        ),
+    )
+
+    dominance_metric = st.sidebar.selectbox(
+        "Dominance metric",
+        options=["top_to_album", "top_to_total"],
+        index=1,
+        format_func=lambda x: {
+            "top_to_album": "Top track / Album",
+            "top_to_total": "Top track / Total track",
+        }[x],
+        help="Choose how track dominance should be measured in the distribution, scaling, and dominance coloring views.",
+    )
+
+    color_mode = st.sidebar.selectbox(
+        "Color points by",
+        options=[
+            "Dominance Bucket",
+            "Album Genre",
+            "Film Genre",
+            "Film Year",
+        ],
+        index=0,
+    )
+
+    use_log_scale = st.sidebar.checkbox(
+        "Use log scale",
+        value=True,
+        help="Apply log scaling to the scatterplot axes where appropriate.",
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Filters")
+
+    year_range = st.sidebar.slider(
+        "Film year range",
+        min_value=min_year,
+        max_value=max_year,
+        value=(min_year, max_year),
+        step=1,
+    )
+
+    selected_album_genres = st.sidebar.multiselect(
+        "Album genres",
+        options=album_genre_options,
+        default=[],
+    )
+
+    selected_film_genres = st.sidebar.multiselect(
+        "Film genres",
+        options=film_genre_options,
+        default=[],
+    )
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    selected_labels = st.sidebar.multiselect(
+        "Labels",
+        options=label_options,
+        default=[],
+    )
+
+    st.sidebar.markdown("---")
+
+    show_data_table = st.sidebar.checkbox(
+        "Show source data",
+        value=False,
+    )
+
+    return {
+        "comparison_metric": comparison_metric,
+        "track_aggregation": track_aggregation,
+        "dominance_metric": dominance_metric,
+        "color_mode": color_mode,
+        "use_log_scale": use_log_scale,
+        "year_range": year_range,
+        "selected_album_genres": selected_album_genres,
+        "selected_film_genres": selected_film_genres,
+        "selected_composers": selected_composers,
+        "selected_labels": selected_labels,
+        "show_data_table": show_data_table,
     }
