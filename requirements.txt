@@ -4,3 +4,6 @@ scipy
 statsmodels
 streamlit
 plotly
+holoviews
+bokeh
+streamlit-bokeh
