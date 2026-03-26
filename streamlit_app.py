@@ -42,6 +42,8 @@ navigation = st.navigation(
             ),
             st.Page("pages/4_Relationship_Explorer.py", title="Relationship Explorer"),
             st.Page("pages/5_Concentration_Explorer.py", title="Concentration Explorer"),
+            st.Page("pages/6_Cooccurrence_Explorer.py", title="Co-occurrence Explorer"),
+            st.Page("pages/7_Cross_Entity_Explorer.py", title="Cross-Entity Explorer"),
         ],
         "🟪 Modeling & Statistical Analysis": [
             st.Page("pages/8_Correlation_Explorer.py", title="Correlation Explorer"),

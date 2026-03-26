@@ -674,7 +674,143 @@ def get_concentration_controls(
         "show_detail_table": show_detail_table,
     }
 
+# PAGE 6 Controls
+def get_cooccurrence_controls(
+    relationship_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Network Explorer.
 
+    Args:
+        relationship_options: Available self-entity relationship modes.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Co-occurrence Controls")
+
+    relationship_type = st.sidebar.radio(
+        "Relationship type",
+        options=relationship_options,
+        index=0,
+        help=(
+            "Choose which within-entity co-occurrence network to explore."
+        ),
+    )
+
+    min_edge_count = st.sidebar.slider(
+        "Minimum co-occurrence",
+        min_value=1,
+        max_value=20,
+        value=2,
+        step=1,
+        help="Hide weak relationships below this album count.",
+    )
+
+    edge_metric = st.sidebar.selectbox(
+        "Edge metric",
+        options=[
+            "Count",
+            "% of source genre",
+            "% of target genre",
+            "Jaccard similarity",
+            "Lift",
+        ],
+        index=0,
+        help=(
+            "Choose how pair strength is measured in the chord thickness, "
+            "ranking chart, and summary table."
+        ),
+    )
+
+    top_n_relationships = st.sidebar.slider(
+        "Number of ranked relationships",
+        min_value=5,
+        max_value=21,
+        value=10,
+        step=1,
+    )
+
+    show_edge_table = st.sidebar.checkbox(
+        "Show relationship summary table",
+        value=True,
+    )
+
+    show_album_table = st.sidebar.checkbox(
+        "Show selected-relationship album table",
+        value=True,
+    )
+
+    return {
+        "relationship_type": relationship_type,
+        "min_edge_count": min_edge_count,
+        "edge_metric": edge_metric,
+        "top_n_edges": top_n_relationships,
+        "show_edge_table": show_edge_table,
+        "show_album_table": show_album_table,
+    }
+
+
+# PAGE 7 Controls
+def get_cross_entity_controls() -> dict:
+    """
+    Render sidebar controls for the Cross-Entity Explorer.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Cross-Entity Controls")
+
+    min_edge_count = st.sidebar.slider(
+        "Minimum flow count",
+        min_value=1,
+        max_value=20,
+        value=2,
+        step=1,
+        help="Hide weak film-to-album flows below this album count.",
+    )
+
+    edge_metric = st.sidebar.selectbox(
+        "Flow metric",
+        options=[
+            "Count",
+            "% of film genre",
+            "% of album genre",
+            "Jaccard similarity",
+            "Lift",
+        ],
+        index=1,
+        help=(
+            "Choose how film-to-album relationship strength is measured in the "
+            "Sankey, ranking chart, and summary table."
+        ),
+    )
+
+    top_n_relationships = st.sidebar.slider(
+        "Number of ranked flows",
+        min_value=5,
+        max_value=30,
+        value=12,
+        step=1,
+    )
+
+    show_edge_table = st.sidebar.checkbox(
+        "Show flow summary table",
+        value=True,
+    )
+
+    show_album_table = st.sidebar.checkbox(
+        "Show selected-flow album table",
+        value=True,
+    )
+
+    return {
+        "min_edge_count": min_edge_count,
+        "edge_metric": edge_metric,
+        "top_n_edges": top_n_relationships,
+        "show_edge_table": show_edge_table,
+        "show_album_table": show_album_table,
+    }
 
 # PAGE 8 Controls
 def get_correlation_controls() -> dict:
