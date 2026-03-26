@@ -679,7 +679,7 @@ def get_cooccurrence_controls(
     relationship_options: list[str],
 ) -> dict:
     """
-    Render sidebar controls for the Network Explorer.
+    Render sidebar controls for the Co-occurrence Explorer.
 
     Args:
         relationship_options: Available self-entity relationship modes.
@@ -752,62 +752,121 @@ def get_cooccurrence_controls(
 
 
 # PAGE 7 Controls
-def get_cross_entity_controls() -> dict:
+def get_cross_entity_controls(
+    relationship_options: list[str],
+) -> dict:
     """
     Render sidebar controls for the Cross-Entity Explorer.
+
+    Args:
+        relationship_options: Available cross-entity relationship modes.
 
     Returns:
         dict: Selected control values.
     """
     st.sidebar.header("Cross-Entity Controls")
 
+    relationship_type = st.sidebar.radio(
+        "Relationship type",
+        options=relationship_options,
+        index=0,
+        help=(
+            "Choose a directional single-hop flow or a constrained multi-hop "
+            "path view."
+        ),
+    )
+
     min_edge_count = st.sidebar.slider(
-        "Minimum flow count",
+        "Minimum relationship count",
         min_value=1,
         max_value=20,
         value=2,
         step=1,
-        help="Hide weak film-to-album flows below this album count.",
+        help="Hide weak visible flows or paths below this contribution count.",
     )
 
     edge_metric = st.sidebar.selectbox(
-        "Flow metric",
+        "Relationship metric",
         options=[
             "Count",
-            "% of film genre",
-            "% of album genre",
+            "% of source",
+            "% of target",
             "Jaccard similarity",
             "Lift",
         ],
-        index=1,
+        index=0,
         help=(
-            "Choose how film-to-album relationship strength is measured in the "
-            "Sankey, ranking chart, and summary table."
+            "Choose how visible relationship strength is measured in the Sankey, "
+            "ranking chart, and summary table."
         ),
     )
 
     top_n_relationships = st.sidebar.slider(
-        "Number of ranked flows",
+        "Number of ranked relationships",
         min_value=5,
         max_value=30,
         value=12,
         step=1,
     )
 
+    st.sidebar.markdown("---")
+    st.sidebar.caption("High-cardinality controls")
+
+    min_composer_count = st.sidebar.slider(
+        "Minimum composer frequency",
+        min_value=1,
+        max_value=20,
+        value=3,
+        step=1,
+        help="Hide composers that appear on too few filtered albums.",
+    )
+
+    top_n_composers = st.sidebar.slider(
+        "Top N composers",
+        min_value=5,
+        max_value=50,
+        value=15,
+        step=1,
+        help="Keep only the most frequent visible composers.",
+    )
+
+    min_label_count = st.sidebar.slider(
+        "Minimum label frequency",
+        min_value=1,
+        max_value=20,
+        value=3,
+        step=1,
+        help="Hide labels that appear on too few filtered albums.",
+    )
+
+    top_n_labels = st.sidebar.slider(
+        "Top N labels",
+        min_value=5,
+        max_value=50,
+        value=20,
+        step=1,
+        help="Keep only the most frequent visible labels.",
+    )
+
     show_edge_table = st.sidebar.checkbox(
-        "Show flow summary table",
+        "Show relationship summary table",
         value=True,
     )
 
     show_album_table = st.sidebar.checkbox(
-        "Show selected-flow album table",
+        "Show selected-relationship album table",
         value=True,
     )
 
     return {
+        "relationship_type": relationship_type,
         "min_edge_count": min_edge_count,
         "edge_metric": edge_metric,
         "top_n_edges": top_n_relationships,
+        "min_composer_count": min_composer_count,
+        "top_n_composers": top_n_composers,
+        "min_label_count": min_label_count,
+        "top_n_labels": top_n_labels,
         "show_edge_table": show_edge_table,
         "show_album_table": show_album_table,
     }

@@ -6,7 +6,8 @@ and selecting the final columns used in the soundtrack analysis workflow.
 These helpers keep data preparation logic separate from the command-line
 entry point so the code is easier to test, reuse, and maintain.
 """
-
+import re
+import unicodedata
 import pandas as pd
 
 FILM_IDS = ["tmdb_id"]
@@ -62,6 +63,21 @@ DERIVED_AWARD_COLS = [
     "us_song_nominee_count",
     "bafta_nominee",
 ]
+
+LABEL_CANONICAL_MAP = {
+    "editions milan music": "Milan",
+    "milan entertainment inc": "Milan",
+    "decca classics": "Decca Records",
+    "filmtrax ltd": "Filmtrax",
+    "netflix": "Netflix Music",
+    "invada": "Invada Records",
+    "virgin music": "Virgin Records",
+    "emi": "EMI Records",
+    "paramount music corporation": "Paramount Music",
+    "universal music": "Universal",
+    "universal music classics": "Universal",
+    "universal records": "Universal",
+}
 
 def load_input_data(
     album_file_path:str,
@@ -335,6 +351,127 @@ def add_album_genres_display(
 
     return albums_df
 
+def _normalize_label_key(label: str) -> str:
+    """
+    Convert a raw label string into a normalized lookup key.
+
+    Args:
+        label: Raw label name.
+
+    Returns:
+        str: Normalized key used for canonical mapping.
+    """
+    if not isinstance(label, str):
+        return ""
+
+    label = unicodedata.normalize("NFKD", label)
+    label = label.encode("ascii", "ignore").decode("ascii")
+    label = label.strip().lower()
+
+    label = label.replace("‐", "-").replace("–", "-").replace("—", "-")
+    label = label.replace("&", "and")
+
+    # Remove punctuation but keep spaces.
+    label = re.sub(r"[^a-z0-9\s-]", " ", label)
+    label = re.sub(r"\s+", " ", label).strip()
+
+    # Light legal-suffix cleanup.
+    label = re.sub(r"\binc\b$", "", label).strip()
+    label = re.sub(r"\bllc\b$", "", label).strip()
+    label = re.sub(r"\bltd\b$", "", label).strip()
+    label = re.sub(r"\s+", " ", label).strip()
+
+    return label
+
+
+def canonicalize_label_name(label: str) -> str:
+    """
+    Map a raw label name to a conservative canonical display label.
+
+    Args:
+        label: Raw label name.
+
+    Returns:
+        str: Canonicalized label name.
+    """
+    if not isinstance(label, str):
+        return ""
+
+    clean_label = label.strip()
+    if not clean_label:
+        return ""
+
+    normalized_key = _normalize_label_key(clean_label)
+
+    if normalized_key in LABEL_CANONICAL_MAP:
+        return LABEL_CANONICAL_MAP[normalized_key]
+
+    return clean_label
+
+
+def normalize_label_names(label_value: object) -> str:
+    """
+    Normalize a raw multi-label field into a cleaned pipe-delimited string.
+
+    Important:
+    - split only on '|'
+    - do not split on commas, because commas often appear inside company names
+
+    Args:
+        label_value: Raw label_names value.
+
+    Returns:
+        str: Canonicalized pipe-delimited label string.
+    """
+    if pd.isna(label_value):
+        return ""
+
+    raw_text = str(label_value).strip()
+    if not raw_text:
+        return ""
+
+    raw_parts = [
+        part.strip()
+        for part in re.split(r"\s*\|\s*", raw_text)
+        if part.strip()
+    ]
+
+    clean_parts = []
+    seen = set()
+
+    for part in raw_parts:
+        canonical = canonicalize_label_name(part)
+        if canonical and canonical not in seen:
+            clean_parts.append(canonical)
+            seen.add(canonical)
+
+    return " | ".join(clean_parts)
+
+
+def add_label_names_clean(
+    albums_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Add a cleaned label field for exploratory filtering and relationship views.
+
+    Args:
+        albums_df: Album-level dataframe.
+
+    Returns:
+        pd.DataFrame: Album dataframe with cleaned label column added.
+    """
+    albums_df = albums_df.copy()
+
+    if "label_names" not in albums_df.columns:
+        albums_df["label_names_clean"] = ""
+        return albums_df
+
+    albums_df["label_names_clean"] = albums_df["label_names"].apply(
+        normalize_label_names
+    )
+
+    return albums_df
+
 def normalize_genre_flags(
         albums_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -417,6 +554,7 @@ def build_album_explorer_dataset(
     albums_df["award_category"] = derive_award_category(albums_df)
     albums_df = add_composer_album_count(albums_df)
     albums_df = add_release_lag_days(albums_df)
+    albums_df = add_label_names_clean(albums_df)
     albums_df = normalize_genre_flags(albums_df)
     albums_df = add_album_genres_display(albums_df)
 
