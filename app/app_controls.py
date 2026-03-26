@@ -711,8 +711,8 @@ def get_cooccurrence_controls(
         "Edge metric",
         options=[
             "Count",
-            "% of source genre",
-            "% of target genre",
+            "% of source",
+            "% of target",
             "Jaccard similarity",
             "Lift",
         ],
