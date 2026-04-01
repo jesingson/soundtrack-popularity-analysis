@@ -147,12 +147,6 @@ def build_feature_rank_lookup(
 ) -> dict[str, dict]:
     """
     Build a lookup dictionary for ranked feature metadata.
-
-    Args:
-        ranking_df: Ranked feature dataframe.
-
-    Returns:
-        dict[str, dict]: Mapping from feature name to ranking row data.
     """
     return ranking_df.set_index("feature").to_dict(orient="index")
 
@@ -162,14 +156,9 @@ def pick_available_metadata_cols(
 ) -> list[str]:
     """
     Select descriptive metadata columns that actually exist in albums_df.
-
-    Args:
-        albums_df: Raw album dataframe.
-
-    Returns:
-        list[str]: Available descriptive columns for tooltip use.
     """
     return [col for col in TOOLTIP_METADATA_CANDIDATES if col in albums_df.columns]
+
 
 def is_id_like_column(col_name: str) -> bool:
     """Return True if a column name looks like an ID/key field."""
@@ -183,6 +172,7 @@ def is_id_like_column(col_name: str) -> bool:
     ]
     return any(marker in col for marker in id_markers)
 
+
 def derive_multi_label_group(
     df: pd.DataFrame,
     flag_cols: list[str],
@@ -191,20 +181,6 @@ def derive_multi_label_group(
 ) -> pd.DataFrame:
     """
     Collapse multi-label genre flags into a single grouping column.
-
-    Rules:
-        - one positive flag -> that genre label
-        - multiple positive flags -> "Multi-genre"
-        - no positive flags -> "Unknown"
-
-    Args:
-        df: Source dataframe.
-        flag_cols: Binary genre flag columns.
-        label_map: Mapping from flag column to display label.
-        output_col: Name of the derived grouping column.
-
-    Returns:
-        pd.DataFrame: Dataframe with the derived grouping column added.
     """
     available_cols = [col for col in flag_cols if col in df.columns]
 
@@ -229,13 +205,6 @@ def build_relationship_explorer_df(
 ) -> pd.DataFrame:
     """
     Build the dataframe used by the freeform relationship explorer.
-
-    Args:
-        explorer_source_df: Rich album-level exploration dataframe.
-
-    Returns:
-        pd.DataFrame: Album-level freeform relationship dataframe with
-        derived grouping columns added.
     """
     explorer_df = explorer_source_df.copy()
 
@@ -261,12 +230,6 @@ def get_freeform_numeric_options(
 ) -> list[str]:
     """
     Return numeric columns eligible for freeform X/Y selection.
-
-    Args:
-        explorer_df: Merged relationship explorer dataframe.
-
-    Returns:
-        list[str]: Safe numeric columns for freeform scatterplots.
     """
     numeric_cols = explorer_df.select_dtypes(
         include=["number", "bool"]
@@ -311,12 +274,6 @@ def get_color_options(
 ) -> list[str]:
     """
     Return low-cardinality columns eligible for color encoding.
-
-    Args:
-        explorer_df: Merged relationship explorer dataframe.
-
-    Returns:
-        list[str]: Safe categorical/binary columns for color grouping.
     """
     color_candidates = []
 
@@ -329,19 +286,18 @@ def get_color_options(
         dtype = explorer_df[col].dtype
 
         if (
-                pd.api.types.is_object_dtype(dtype)
-                or isinstance(dtype, pd.CategoricalDtype)
+            pd.api.types.is_object_dtype(dtype)
+            or isinstance(dtype, pd.CategoricalDtype)
         ):
             if (
-                    col not in EXCLUDED_EXPLORER_COLS
-                    and not is_id_like_column(col)
-                    and 2 <= nunique <= MAX_COLOR_CARDINALITY
+                col not in EXCLUDED_EXPLORER_COLS
+                and not is_id_like_column(col)
+                and 2 <= nunique <= MAX_COLOR_CARDINALITY
             ):
                 color_candidates.append(col)
 
-
         elif pd.api.types.is_bool_dtype(dtype) or (
-                pd.api.types.is_numeric_dtype(dtype) and nunique <= 5
+            pd.api.types.is_numeric_dtype(dtype) and nunique <= 5
         ):
             if col not in EXCLUDED_EXPLORER_COLS and not is_id_like_column(col):
                 color_candidates.append(col)
@@ -398,22 +354,6 @@ def build_freeform_scatter_data(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, dict]:
     """
     Build freeform scatterplot data for arbitrary numeric X and Y columns.
-
-    Args:
-        explorer_df: Album-level relationship explorer dataframe.
-        x_col: Selected x-axis column.
-        y_col: Selected y-axis column.
-        color_col: Optional color grouping column.
-        transform_x: X-axis transform choice ("None" or "Log1p").
-        transform_y: Y-axis transform choice ("None" or "Log1p").
-        apply_jitter: Whether to add jitter for display only.
-        jitter_strength: Relative jitter strength used for display only.
-
-    Returns:
-        tuple[pd.DataFrame, pd.DataFrame | None, dict]:
-            1. Plot dataframe
-            2. Optional fitted-line dataframe
-            3. Summary metrics
     """
     required_cols = [x_col, y_col]
     if color_col and color_col != "None":
@@ -516,9 +456,230 @@ def build_freeform_scatter_data(
         "y_axis_title": (
             f"log1p({y_display})" if transform_y == "Log1p" else y_display
         ),
+        "slope": slope,
+        "direction": (
+            "Positive" if pearson_r > 0.05
+            else "Negative" if pearson_r < -0.05
+            else "Near-zero"
+        ),
     }
 
     return plot_df, line_df, metrics
+
+
+def get_relationship_view_explainer(
+    mode: str,
+    metrics: dict | None = None,
+    feature_rank: dict | None = None,
+) -> str:
+    """
+    Explain the current relationship view in plain language.
+    """
+    if mode == "Guided":
+        return (
+            "Guided view shows the univariate relationship between one ranked feature "
+            f"and {get_display_label(dp.TARGET_COL)}. This is a screening view for signal "
+            "strength, not a controlled multivariate effect."
+        )
+
+    x_title = metrics["x_axis_title"]
+    y_title = metrics["y_axis_title"]
+    color_text = (
+        f", colored by {get_display_label(metrics['color_col'])}"
+        if metrics["color_col"] and metrics["color_col"] != "None"
+        else ""
+    )
+
+    return (
+        f"Freeform view compares {x_title} vs {y_title}{color_text}. "
+        "The fitted line and correlation are computed on the displayed scale; jitter, "
+        "when enabled, affects display only."
+    )
+
+
+def build_relationship_context_caption(
+    mode: str,
+    controls: dict,
+    metrics: dict,
+    feature_rank: dict | None = None,
+) -> str:
+    """
+    Build a natural-language scope caption for the current view.
+    """
+    if mode == "Guided":
+        parts = [
+            f"Guided comparison using {get_display_label(metrics['feature_col'])}",
+            f"against {get_display_label(metrics['target_col'])}",
+            f"ranked #{feature_rank['rank']} by absolute Pearson correlation",
+        ]
+        if controls["show_trendline"]:
+            parts.append("with fitted line shown")
+        else:
+            parts.append("with fitted line hidden")
+        return ", ".join(parts) + "."
+
+    base = (
+        f"Comparing {metrics['x_axis_title']} vs {metrics['y_axis_title']}"
+    )
+
+    extras = []
+
+    if controls["color_col"] != "None":
+        extras.append(f"color = {get_display_label(controls['color_col'])}")
+
+    if controls["transform_x"] != "None" or controls["transform_y"] != "None":
+        transform_bits = []
+        if controls["transform_x"] != "None":
+            transform_bits.append(f"X: {controls['transform_x']}")
+        if controls["transform_y"] != "None":
+            transform_bits.append(f"Y: {controls['transform_y']}")
+        extras.append("transforms = " + ", ".join(transform_bits))
+
+    if controls["apply_jitter"]:
+        extras.append(f"jitter = {controls['jitter_strength']:.3f}")
+
+    extras.append(
+        "fitted line shown" if controls["show_trendline"] else "fitted line hidden"
+    )
+
+    return base + (" | " + " | ".join(extras) if extras else "") + "."
+
+
+def build_relationship_insight_summary(
+    mode: str,
+    metrics: dict,
+    feature_rank: dict | None = None,
+) -> list[tuple[str, str, str]]:
+    """
+    Build key insight cards for the relationship explorer.
+    """
+    pearson_r = float(metrics["pearson_r"])
+    r_squared = float(metrics["r_squared"])
+
+    if mode == "Guided":
+        direction = feature_rank["direction"].title()
+        return [
+            ("Feature Rank", f"#{feature_rank['rank']}", "Absolute Pearson ranking"),
+            ("Pearson r", f"{feature_rank['corr']:.3f}", f"{direction} association"),
+            ("Univariate R²", f"{feature_rank['r_squared']:.3f}", "Single-feature fit strength"),
+        ]
+
+    direction = (
+        "Positive" if pearson_r > 0.05
+        else "Negative" if pearson_r < -0.05
+        else "Near-zero"
+    )
+
+    color_value = (
+        get_display_label(metrics["color_col"])
+        if metrics["color_col"] and metrics["color_col"] != "None"
+        else "None"
+    )
+
+    return [
+        ("Pearson r", f"{pearson_r:.3f}", f"{direction} association"),
+        ("Rows Used", f"{metrics['rows_used']:,}", "Albums in the plotted view"),
+        ("Color Grouping", color_value, "Categorical overlay"),
+    ]
+
+
+def render_relationship_insight_cards(
+    mode: str,
+    metrics: dict,
+    feature_rank: dict | None = None,
+) -> None:
+    """
+    Render top-line insight cards.
+    """
+    insights = build_relationship_insight_summary(
+        mode=mode,
+        metrics=metrics,
+        feature_rank=feature_rank,
+    )
+
+    st.markdown("### 🧠 Key Insights")
+    cols = st.columns(3)
+
+    for i, (title, value, caption) in enumerate(insights):
+        with cols[i]:
+            st.metric(title, value)
+            st.caption(caption)
+
+
+def build_relationship_supporting_insight(
+    mode: str,
+    metrics: dict,
+    controls: dict,
+    feature_rank: dict | None = None,
+) -> str:
+    """
+    Build a short interpretation caption for the chart.
+    """
+    pearson_r = float(metrics["pearson_r"])
+    abs_r = abs(pearson_r)
+
+    if abs_r >= 0.60:
+        strength = "strong"
+    elif abs_r >= 0.35:
+        strength = "moderate"
+    elif abs_r >= 0.15:
+        strength = "weak-to-moderate"
+    else:
+        strength = "weak"
+
+    direction = (
+        "positive" if pearson_r > 0.05
+        else "negative" if pearson_r < -0.05
+        else "near-zero"
+    )
+
+    if mode == "Guided":
+        trendline_note = (
+            " The fitted line is shown to summarize the univariate trend."
+            if controls["show_trendline"]
+            else " The fitted line is hidden, so the visual emphasizes the raw scatter."
+        )
+
+        return (
+            f"💡 {get_display_label(metrics['feature_col'])} shows a {strength} {direction} "
+            f"relationship with {get_display_label(metrics['target_col'])} "
+            f"(r = {feature_rank['corr']:.3f}, R² = {feature_rank['r_squared']:.3f}). "
+            "This is useful for feature screening, but it should not be read as the "
+            "independent effect of the feature after controlling for other variables."
+            f"{trendline_note}"
+        )
+
+    transform_note = ""
+    if controls["transform_x"] != "None" or controls["transform_y"] != "None":
+        transform_note = (
+            " The relationship is being evaluated on the displayed transformed scale, "
+            "which can compress tails and make broad patterns easier to see."
+        )
+
+    jitter_note = ""
+    if controls["apply_jitter"]:
+        jitter_note = (
+            " Jitter is applied for display only and does not affect the correlation or fitted line."
+        )
+
+    color_note = ""
+    if controls["color_col"] != "None":
+        color_note = (
+            f" Color is used to show potential clustering by {get_display_label(controls['color_col'])}."
+        )
+
+    trendline_note = (
+        " The fitted line is shown as a simple linear summary."
+        if controls["show_trendline"]
+        else " The fitted line is hidden, so the view emphasizes the raw point cloud."
+    )
+
+    return (
+        f"💡 {get_display_label(metrics['x_col'])} and {get_display_label(metrics['y_col'])} "
+        f"show a {strength} {direction} linear association "
+        f"(r = {pearson_r:.3f}, R² = {metrics['r_squared']:.3f})."
+        f"{transform_note}{jitter_note}{color_note}{trendline_note}"
+    )
 
 
 def create_guided_scatter_chart(
@@ -530,16 +691,6 @@ def create_guided_scatter_chart(
 ) -> alt.Chart:
     """
     Create the guided scatterplot with richer tooltips.
-
-    Args:
-        plot_df: Scatterplot point dataframe.
-        line_df: Fitted line dataframe.
-        metrics: Metrics dictionary returned by the helper.
-        feature_rank: Ranking metadata for the selected feature.
-        show_trendline: Whether to overlay the fitted line.
-
-    Returns:
-        alt.Chart: Layered Altair scatterplot and fitted line.
     """
     feature_label = get_display_label(metrics["feature_col"])
     target_label = get_display_label(metrics["target_col"])
@@ -633,15 +784,6 @@ def create_freeform_scatter_chart(
 ) -> alt.Chart:
     """
     Create a freeform scatterplot for arbitrary numeric X and Y columns.
-
-    Args:
-        plot_df: Plot dataframe.
-        line_df: Optional fitted line dataframe.
-        metrics: Summary metrics dictionary.
-        show_trendline: Whether to overlay the fitted line.
-
-    Returns:
-        alt.Chart: Scatterplot, optionally with trendline.
     """
     tooltip_fields = []
 
@@ -804,10 +946,6 @@ def render_guided_summary_metrics(
 ) -> None:
     """
     Render headline metrics for the guided feature view.
-
-    Args:
-        metrics: Metrics dictionary from the scatter helper.
-        feature_rank: Ranking metadata for the selected feature.
     """
     direction = feature_rank["direction"].title()
 
@@ -839,9 +977,6 @@ def render_freeform_summary_metrics(
 ) -> None:
     """
     Render headline metrics for freeform mode.
-
-    Args:
-        metrics: Freeform metrics dictionary.
     """
     col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -940,6 +1075,30 @@ def main() -> None:
             target_col=dp.TARGET_COL,
         )
 
+        st.caption(
+            get_relationship_view_explainer(
+                mode="Guided",
+                metrics=metrics,
+                feature_rank=feature_rank,
+            )
+        )
+
+        st.markdown("**View Context**")
+        st.caption(
+            build_relationship_context_caption(
+                mode="Guided",
+                controls=controls,
+                metrics=metrics,
+                feature_rank=feature_rank,
+            )
+        )
+
+        render_relationship_insight_cards(
+            mode="Guided",
+            metrics=metrics,
+            feature_rank=feature_rank,
+        )
+
         render_guided_summary_metrics(
             metrics=metrics,
             feature_rank=feature_rank,
@@ -954,6 +1113,15 @@ def main() -> None:
             show_trendline=controls["show_trendline"],
         )
         st.altair_chart(chart, width="stretch")
+
+        st.caption(
+            build_relationship_supporting_insight(
+                mode="Guided",
+                metrics=metrics,
+                controls=controls,
+                feature_rank=feature_rank,
+            )
+        )
 
         if controls["show_data_table"]:
             st.subheader("Scatterplot Source Data")
@@ -986,6 +1154,27 @@ def main() -> None:
             jitter_strength=controls["jitter_strength"],
         )
 
+        st.caption(
+            get_relationship_view_explainer(
+                mode="Freeform",
+                metrics=metrics,
+            )
+        )
+
+        st.markdown("**View Context**")
+        st.caption(
+            build_relationship_context_caption(
+                mode="Freeform",
+                controls=controls,
+                metrics=metrics,
+            )
+        )
+
+        render_relationship_insight_cards(
+            mode="Freeform",
+            metrics=metrics,
+        )
+
         render_freeform_summary_metrics(metrics)
 
         st.subheader("Scatterplot")
@@ -996,6 +1185,14 @@ def main() -> None:
             show_trendline=controls["show_trendline"],
         )
         st.altair_chart(chart, width="stretch")
+
+        st.caption(
+            build_relationship_supporting_insight(
+                mode="Freeform",
+                metrics=metrics,
+                controls=controls,
+            )
+        )
 
         if controls["show_data_table"]:
             st.subheader("Scatterplot Source Data")

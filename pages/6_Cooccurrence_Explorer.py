@@ -877,6 +877,267 @@ def render_summary_metrics(
 
     st.caption(f"Top relationship: {top_relationship}")
 
+def get_cooccurrence_view_explainer(
+    relationship_type: str,
+    metric_name: str,
+) -> str:
+    """
+    Explain how to interpret the current co-occurrence view.
+    """
+    metric_label = get_edge_metric_display_label(metric_name)
+
+    if relationship_type == "Album Genre ↔ Album Genre":
+        family = "album genres"
+    elif relationship_type == "Film Genre ↔ Film Genre":
+        family = "film genres"
+    else:
+        family = "award categories"
+
+    if metric_name == "Count":
+        return (
+            f"This view ranks pairs of {family} by raw co-occurrence count, showing "
+            "which combinations appear together most often in the filtered albums."
+        )
+
+    if metric_name in {"% of source", "% of target", "% of source genre", "% of target genre"}:
+        return (
+            f"This view emphasizes conditional overlap across {family}, showing how often "
+            "one side of a relationship also appears with the other."
+        )
+
+    if metric_name == "Jaccard similarity":
+        return (
+            f"This view ranks {family} pairs by Jaccard similarity, highlighting pairs "
+            "with strong overlap relative to their combined footprint."
+        )
+
+    return (
+        f"This view ranks {family} pairs by lift, highlighting combinations that "
+        "co-occur more often than expected based on their individual prevalence."
+    )
+
+def build_cooccurrence_context_caption(
+    relationship_type: str,
+    metric_name: str,
+    min_edge_count: int,
+    top_n_edges: int,
+    albums_in_view: int,
+) -> str:
+    """
+    Build a natural-language scope caption for the current co-occurrence view.
+    """
+    return (
+        f"Analyzing {relationship_type.lower()} across {albums_in_view:,} filtered albums, "
+        f"retaining only pairs with at least {min_edge_count:,} co-occurrence(s), and "
+        f"ranking the top {top_n_edges:,} relationships by {get_edge_metric_display_label(metric_name).lower()}."
+    )
+
+def format_edge_metric_value(value: float, metric_name: str) -> str:
+    """
+    Format an edge metric value for cards and captions.
+    """
+    if pd.isna(value):
+        return "NA"
+
+    if metric_name in {"% of source", "% of target", "% of source genre", "% of target genre"}:
+        return f"{value:.1%}"
+    if metric_name == "Jaccard similarity":
+        return f"{value:.3f}"
+    if metric_name == "Lift":
+        return f"{value:.2f}"
+    return f"{value:,.0f}"
+
+def build_cooccurrence_insight_summary(
+    edge_df: pd.DataFrame,
+    metric_name: str,
+):
+    """
+    Build top-line insight cards for the current co-occurrence view.
+    """
+    if edge_df.empty:
+        return None
+
+    metric_col = get_edge_metric_column(metric_name)
+    ranked = edge_df.sort_values(
+        [metric_col, "count", "pair_label"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+
+    if len(ranked) >= 2:
+        second = ranked.iloc[1]
+        gap_value = float(top[metric_col] - second[metric_col])
+        gap_text = format_edge_metric_value(gap_value, metric_name)
+        gap_caption = f"Gap vs #2 on {get_edge_metric_display_label(metric_name)}"
+    else:
+        gap_text = "NA"
+        gap_caption = "Only one visible edge"
+
+    median_visible_value = float(edge_df[metric_col].median())
+
+    return [
+        (
+            "Top Relationship",
+            str(top["pair_label"]),
+            f"{get_edge_metric_display_label(metric_name)} = {format_edge_metric_value(float(top[metric_col]), metric_name)}",
+        ),
+        (
+            "Lead Gap",
+            gap_text,
+            gap_caption,
+        ),
+        (
+            "Typical Visible Value",
+            format_edge_metric_value(median_visible_value, metric_name),
+            f"Median {get_edge_metric_display_label(metric_name).lower()} across visible pairs",
+        ),
+    ]
+
+def render_cooccurrence_insight_cards(
+    edge_df: pd.DataFrame,
+    metric_name: str,
+) -> None:
+    """
+    Render top-line co-occurrence insight cards.
+    """
+    insights = build_cooccurrence_insight_summary(
+        edge_df=edge_df,
+        metric_name=metric_name,
+    )
+    if not insights:
+        return
+
+    st.markdown("### 🧠 Key Insights")
+    cols = st.columns(3)
+
+    for i, (title, value, caption) in enumerate(insights):
+        with cols[i]:
+            st.metric(title, value)
+            st.caption(caption)
+
+def build_top_edges_supporting_insight(
+    edge_df: pd.DataFrame,
+    metric_name: str,
+) -> str:
+    """
+    Build a data-reactive supporting insight for the top-edges view.
+    """
+    if edge_df.empty:
+        return ""
+
+    metric_col = get_edge_metric_column(metric_name)
+    ranked = edge_df.sort_values(
+        [metric_col, "count", "pair_label"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+    top_value = float(top[metric_col])
+
+    if len(ranked) >= 2:
+        second = ranked.iloc[1]
+        second_value = float(second[metric_col])
+        gap = top_value - second_value
+
+        return (
+            f"💡 {top['pair_label']} is the strongest visible relationship on "
+            f"{get_edge_metric_display_label(metric_name).lower()} "
+            f"({format_edge_metric_value(top_value, metric_name)}), ahead of "
+            f"{second['pair_label']} at {format_edge_metric_value(second_value, metric_name)}. "
+            f"The gap is {format_edge_metric_value(gap, metric_name)}."
+        )
+
+    return (
+        f"💡 {top['pair_label']} is the only visible relationship after filtering, "
+        f"with {get_edge_metric_display_label(metric_name).lower()} = "
+        f"{format_edge_metric_value(top_value, metric_name)}."
+    )
+
+def build_chord_supporting_insight(
+    edge_df: pd.DataFrame,
+    metric_name: str,
+    relationship_type: str,
+) -> str:
+    """
+    Build a combined explainer + data-reactive supporting insight for the chord diagram.
+    """
+    if edge_df.empty:
+        return ""
+
+    metric_col = get_edge_metric_column(metric_name)
+    ranked = edge_df.sort_values(
+        [metric_col, "count", "pair_label"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+    top_value = float(top[metric_col])
+
+    if relationship_type == "Album Genre ↔ Album Genre":
+        family_label = "album-genre"
+    elif relationship_type == "Film Genre ↔ Film Genre":
+        family_label = "film-genre"
+    else:
+        family_label = "award"
+
+    explainer = (
+        f"Each ribbon represents a {family_label} pair retained under the current "
+        f"minimum co-occurrence threshold. Ribbon thickness reflects "
+        f"{get_edge_metric_display_label(metric_name).lower()}."
+    )
+
+    total_metric = float(ranked[metric_col].sum())
+    top3_share = (
+        float(ranked.head(min(3, len(ranked)))[metric_col].sum() / total_metric)
+        if total_metric > 0 else np.nan
+    )
+
+    if metric_name == "Count":
+        if pd.notna(top3_share):
+            reactive = (
+                f"In the current view, {top['pair_label']} is the strongest visible pair, "
+                f"and the top 3 ribbons account for {top3_share:.1%} of total visible "
+                f"co-occurrence weight."
+            )
+        else:
+            reactive = (
+                f"In the current view, {top['pair_label']} is the strongest visible pair."
+            )
+    else:
+        reactive = (
+            f"In the current view, {top['pair_label']} is the strongest visible pair at "
+            f"{format_edge_metric_value(top_value, metric_name)} on "
+            f"{get_edge_metric_display_label(metric_name).lower()}."
+        )
+
+    return f"💡 {explainer} {reactive}"
+
+def build_pair_drilldown_supporting_insight(
+    detail_df: pd.DataFrame,
+    pair_label: str,
+) -> str:
+    """
+    Build a data-reactive supporting insight for the selected pair drilldown.
+    """
+    if detail_df.empty:
+        return f"💡 No albums remain for {pair_label} under the current filters."
+
+    album_count = int(len(detail_df))
+
+    if "lfm_album_listeners" in detail_df.columns:
+        listeners = pd.to_numeric(detail_df["lfm_album_listeners"], errors="coerce").dropna()
+        if not listeners.empty:
+            median_listeners = float(listeners.median())
+            top_listeners = float(listeners.max())
+            return (
+                f"💡 {pair_label} appears on {album_count:,} album(s) in the current view. "
+                f"The median album has {median_listeners:,.0f} listeners, and the top album reaches "
+                f"{top_listeners:,.0f}."
+            )
+
+    return f"💡 {pair_label} appears on {album_count:,} album(s) in the current view."
+
 
 def render_genre_chord(
     edge_df: pd.DataFrame,
@@ -1474,6 +1735,20 @@ def main() -> None:
         return
 
     relationship_type = controls["relationship_type"]
+    metric_name = controls["edge_metric"]
+
+    st.caption(get_cooccurrence_view_explainer(relationship_type, metric_name))
+
+    st.markdown("**View Context**")
+    st.caption(
+        build_cooccurrence_context_caption(
+            relationship_type=relationship_type,
+            metric_name=metric_name,
+            min_edge_count=controls["min_edge_count"],
+            top_n_edges=controls["top_n_edges"],
+            albums_in_view=len(filtered_df),
+        )
+    )
 
     if relationship_type == "Album Genre ↔ Album Genre":
         edge_df = build_album_genre_edge_df(
@@ -1490,10 +1765,15 @@ def main() -> None:
 
         nodes_df = build_album_genre_node_df(edge_df)
 
+        render_cooccurrence_insight_cards(
+            edge_df=edge_df,
+            metric_name=metric_name,
+        )
+
         render_summary_metrics(
             filtered_df=filtered_df,
             relationship_df=edge_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
             relationship_label="Edges Shown",
         )
 
@@ -1502,26 +1782,29 @@ def main() -> None:
             edge_df=edge_df,
             nodes_df=nodes_df,
             filtered_df=filtered_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.caption(
-            "Each ribbon represents an album-genre pair retained under the "
-            "current minimum co-occurrence threshold. Ribbon thickness reflects "
-            "the selected edge metric."
+            build_chord_supporting_insight(
+                edge_df=edge_df,
+                metric_name=metric_name,
+                relationship_type=relationship_type,
+            )
         )
 
         st.subheader("Top Genre Pairings")
         top_edges_chart = create_top_edges_chart(
             edge_df=edge_df,
             top_n_edges=controls["top_n_edges"],
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.altair_chart(top_edges_chart, width="stretch")
+        st.caption(build_top_edges_supporting_insight(edge_df, metric_name))
 
         if controls["show_edge_table"]:
             st.markdown("#### Relationship Summary Table")
 
-            metric_col = get_edge_metric_column(controls["edge_metric"])
+            metric_col = get_edge_metric_column(metric_name)
 
             edge_table = edge_df.sort_values(
                 [metric_col, "count", "pair_label"],
@@ -1578,6 +1861,13 @@ def main() -> None:
             target_genre=target_genre,
         )
 
+        st.caption(
+            build_pair_drilldown_supporting_insight(
+                detail_df=detail_df,
+                pair_label=selected_pair_label,
+            )
+        )
+
         if detail_df.empty:
             st.info("No albums match the selected genre pair.")
             return
@@ -1604,10 +1894,15 @@ def main() -> None:
 
         nodes_df = build_film_genre_node_df(edge_df)
 
+        render_cooccurrence_insight_cards(
+            edge_df=edge_df,
+            metric_name=metric_name,
+        )
+
         render_summary_metrics(
             filtered_df=filtered_df,
             relationship_df=edge_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
             relationship_label="Film-Genre Pairs Shown",
         )
 
@@ -1616,26 +1911,29 @@ def main() -> None:
             edge_df=edge_df,
             nodes_df=nodes_df,
             filtered_df=filtered_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.caption(
-            "Each ribbon represents a pair of film genres that co-occur on the "
-            "same filtered soundtrack albums. Ribbon thickness reflects the "
-            "selected edge metric."
+            build_chord_supporting_insight(
+                edge_df=edge_df,
+                metric_name=metric_name,
+                relationship_type=relationship_type,
+            )
         )
 
         st.subheader("Top Film Genre Pairings")
         top_edges_chart = create_top_edges_chart(
             edge_df=edge_df,
             top_n_edges=controls["top_n_edges"],
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.altair_chart(top_edges_chart, width="stretch")
+        st.caption(build_top_edges_supporting_insight(edge_df, metric_name))
 
         if controls["show_edge_table"]:
             st.markdown("#### Film Genre Relationship Summary Table")
 
-            metric_col = get_edge_metric_column(controls["edge_metric"])
+            metric_col = get_edge_metric_column(metric_name)
 
             edge_table = edge_df.sort_values(
                 [metric_col, "count", "pair_label"],
@@ -1688,6 +1986,13 @@ def main() -> None:
             target_genre=target_genre,
         )
 
+        st.caption(
+            build_pair_drilldown_supporting_insight(
+                detail_df=detail_df,
+                pair_label=selected_pair_label,
+            )
+        )
+
         if detail_df.empty:
             st.info("No albums match the selected film genre pair.")
             return
@@ -1714,10 +2019,15 @@ def main() -> None:
 
         award_nodes_df = build_award_node_df(award_df)
 
+        render_cooccurrence_insight_cards(
+            edge_df=award_df,
+            metric_name=metric_name,
+        )
+
         render_summary_metrics(
             filtered_df=filtered_df,
             relationship_df=award_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
             relationship_label="Award Pairs Shown",
         )
 
@@ -1726,26 +2036,29 @@ def main() -> None:
             edge_df=award_df,
             nodes_df=award_nodes_df,
             filtered_df=filtered_df,
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.caption(
-            "Each ribbon represents a pair of award categories that co-occur on "
-            "the same filtered soundtrack albums. Ribbon thickness reflects the "
-            "selected edge metric."
+            build_chord_supporting_insight(
+                edge_df=award_df,
+                metric_name=metric_name,
+                relationship_type=relationship_type,
+            )
         )
 
         st.subheader("Top Award Pairings")
         top_awards_chart = create_top_edges_chart(
             edge_df=award_df,
             top_n_edges=controls["top_n_edges"],
-            metric_name=controls["edge_metric"],
+            metric_name=metric_name,
         )
         st.altair_chart(top_awards_chart, width="stretch")
+        st.caption(build_top_edges_supporting_insight(award_df, metric_name))
 
         if controls["show_edge_table"]:
             st.markdown("#### Award Relationship Summary Table")
 
-            metric_col = get_edge_metric_column(controls["edge_metric"])
+            metric_col = get_edge_metric_column(metric_name)
 
             award_table = award_df.sort_values(
                 [metric_col, "count", "pair_label"],
@@ -1800,6 +2113,13 @@ def main() -> None:
             df=filtered_df,
             source_award=source_award,
             target_award=target_award,
+        )
+
+        st.caption(
+            build_pair_drilldown_supporting_insight(
+                detail_df=detail_df,
+                pair_label=selected_pair_label,
+            )
         )
 
         if detail_df.empty:

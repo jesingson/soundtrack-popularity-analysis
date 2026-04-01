@@ -122,6 +122,211 @@ def get_concentration_group_options(df: pd.DataFrame) -> list[str]:
 
     return group_options
 
+def get_concentration_view_explainer(metric: str, ranking_metric: str) -> str:
+    metric_label = get_display_label(metric)
+    ranking_label = get_display_label(ranking_metric)
+
+    if ranking_metric == "gini":
+        return (
+            f"Groups are ranked by Gini, which measures how unevenly {metric_label.lower()} "
+            "is distributed across albums within each group. Higher values indicate that a "
+            "small number of albums dominate performance."
+        )
+
+    if ranking_metric.startswith("top_"):
+        return (
+            f"Groups are ranked by {ranking_label.lower()}, which captures how much of total "
+            f"{metric_label.lower()} is driven by the top-performing albums in each group."
+        )
+
+    if ranking_metric == "total_metric":
+        return (
+            f"Groups are ranked by total {metric_label.lower()}, showing overall catalog "
+            "performance across all albums in each group."
+        )
+
+    return (
+        f"Groups are ranked by {ranking_label.lower()}, derived from the selected "
+        f"{metric_label.lower()} metric."
+    )
+
+def render_concentration_insight_cards(summary_df, ranking_metric):
+    insights = build_concentration_insight_summary(summary_df, ranking_metric)
+    if not insights:
+        return
+
+    st.markdown("### 🧠 Key Insights")
+    cols = st.columns(3)
+
+    for i, (title, value, caption) in enumerate(insights):
+        with cols[i]:
+            st.metric(title, value)
+            st.caption(caption)
+
+def build_ranking_supporting_insight(
+    summary_df: pd.DataFrame,
+    ranking_metric: str,
+) -> str:
+    """
+    Build a data-reactive supporting insight for the ranking chart.
+    """
+    if summary_df.empty:
+        return ""
+
+    ranked = summary_df.sort_values(
+        [ranking_metric, "total_metric", "album_count"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+    top_value = float(top[ranking_metric])
+    median_visible_value = float(summary_df[ranking_metric].median())
+
+    if len(ranked) >= 2:
+        second = ranked.iloc[1]
+        second_value = float(second[ranking_metric])
+        gap = top_value - second_value
+
+        if ranking_metric in {"top_1_share", "top_3_share", "top_5_share"}:
+            gap_strength = (
+                "a wide lead" if gap >= 0.10
+                else "a modest lead" if gap >= 0.04
+                else "a narrow lead"
+            )
+        elif ranking_metric == "gini":
+            gap_strength = (
+                "a wide lead" if gap >= 0.08
+                else "a modest lead" if gap >= 0.03
+                else "a narrow lead"
+            )
+        else:
+            gap_strength = "a clear lead" if gap > 0 else "no meaningful lead"
+
+        return (
+            f"💡 {top['group']} ranks first on {get_display_label(ranking_metric).lower()} "
+            f"with {format_concentration_value(top_value, ranking_metric)}, ahead of "
+            f"{second['group']} at {format_concentration_value(second_value, ranking_metric)}. "
+            f"This is {gap_strength} in the current view. The median visible group sits at "
+            f"{format_concentration_value(median_visible_value, ranking_metric)}."
+        )
+
+    return (
+        f"💡 {top['group']} is the only visible group after filtering, with "
+        f"{get_display_label(ranking_metric).lower()} = "
+        f"{format_concentration_value(top_value, ranking_metric)}."
+    )
+
+def build_composition_supporting_insight(
+    composition_df: pd.DataFrame,
+    ranking_metric: str,
+    metric: str,
+) -> str:
+    """
+    Build a data-reactive supporting insight for the composition chart.
+    """
+    if composition_df.empty:
+        return ""
+
+    top_k = get_composition_top_k(ranking_metric)
+    top_k_label = "top album" if top_k == 1 else f"top {top_k} albums"
+
+    grouped = (
+        composition_df.groupby("group", dropna=False)
+        .apply(
+            lambda g: pd.Series({
+                "named_share": float(
+                    g.loc[g["segment_label"] != "Others", "composition_share"].sum()
+                ),
+                "others_share": float(
+                    g.loc[g["segment_label"] == "Others", "composition_share"].sum()
+                ),
+            })
+        )
+        .reset_index()
+    )
+
+    top_heavy_row = grouped.sort_values(
+        ["named_share", "others_share", "group"],
+        ascending=[False, True, True],
+    ).iloc[0]
+
+    if (grouped["others_share"] > 0).any():
+        broad_tail_row = grouped.sort_values(
+            ["others_share", "named_share", "group"],
+            ascending=[False, True, True],
+        ).iloc[0]
+
+        return (
+            f"💡 {top_heavy_row['group']} is the most top-heavy group in the current view: "
+            f"its {top_k_label} account for {top_heavy_row['named_share']:.1%} of total "
+            f"{get_display_label(metric).lower()}. By contrast, {broad_tail_row['group']} "
+            f"has the largest long tail, with Others contributing "
+            f"{broad_tail_row['others_share']:.1%}."
+        )
+
+    return (
+        f"💡 {top_heavy_row['group']} is the most top-heavy group in the current view: "
+        f"its {top_k_label} account for {top_heavy_row['named_share']:.1%} of total "
+        f"{get_display_label(metric).lower()}."
+    )
+
+def build_lorenz_supporting_insight(
+    summary_df: pd.DataFrame,
+    lorenz_groups: list[str],
+) -> str:
+    """
+    Build a data-reactive supporting insight for the Lorenz curve.
+    """
+    if summary_df.empty or not lorenz_groups:
+        return ""
+
+    visible_lorenz_df = summary_df[summary_df["group"].isin(lorenz_groups)].copy()
+    if visible_lorenz_df.empty:
+        return ""
+
+    most_concentrated = visible_lorenz_df.sort_values(
+        ["gini", "total_metric", "group"],
+        ascending=[False, False, True],
+    ).iloc[0]
+
+    least_concentrated = visible_lorenz_df.sort_values(
+        ["gini", "total_metric", "group"],
+        ascending=[True, False, True],
+    ).iloc[0]
+
+    return (
+        f"💡 Among the groups shown in the Lorenz curve, {most_concentrated['group']} is the "
+        f"most concentrated (Gini = {most_concentrated['gini']:.3f}), while "
+        f"{least_concentrated['group']} is the closest to an even distribution "
+        f"(Gini = {least_concentrated['gini']:.3f}). Curves farther from the diagonal "
+        "reflect a greater share of performance being captured by fewer albums."
+    )
+
+def build_pareto_supporting_insight(
+    pareto_df: pd.DataFrame,
+    metric: str,
+) -> str:
+    """
+    Build a data-reactive supporting insight for the Pareto drilldown.
+    """
+    if pareto_df.empty:
+        return ""
+
+    top_1_share = float(pareto_df.iloc[0]["share_of_group_total"])
+    top_3_share = float(
+        pareto_df.head(min(3, len(pareto_df)))["share_of_group_total"].sum()
+    )
+
+    albums_to_50 = int((pareto_df["cumulative_share"] >= 0.50).idxmax() + 1)
+    albums_to_80 = int((pareto_df["cumulative_share"] >= 0.80).idxmax() + 1)
+
+    return (
+        f"💡 In this group, the top album contributes {top_1_share:.1%} of total "
+        f"{get_display_label(metric).lower()}, while the top 3 albums contribute "
+        f"{top_3_share:.1%}. It takes {albums_to_50} album(s) to reach 50% of the "
+        f"group total and {albums_to_80} album(s) to reach 80%."
+    )
+
 
 def build_group_value_options_map(
     df: pd.DataFrame,
@@ -151,6 +356,90 @@ def build_group_value_options_map(
 
     return value_map
 
+
+def build_concentration_context_caption(
+    metric: str,
+    group_var: str,
+    selected_groups: list[str],
+    top_n: int | None,
+    min_group_size: int,
+) -> str:
+    metric_label = get_display_label(metric)
+    group_label = get_display_label(group_var).lower()
+
+    if selected_groups:
+        if len(selected_groups) <= 5:
+            group_scope = f"the selected {group_label} values ({', '.join(selected_groups)})"
+        else:
+            shown = ", ".join(selected_groups[:5])
+            group_scope = f"the selected {group_label} values ({shown}, ...)"
+    else:
+        group_scope = f"the top {top_n} {group_label} groups by album count"
+
+    return (
+        f"Ranking {group_scope} based on {metric_label.lower()}, "
+        f"excluding groups with fewer than {min_group_size} albums."
+    )
+
+def format_concentration_value(value: float, ranking_metric: str) -> str:
+    """
+    Format a concentration metric value for display in cards and captions.
+    """
+    if pd.isna(value):
+        return "NA"
+
+    if ranking_metric in {"top_1_share", "top_3_share", "top_5_share"}:
+        return f"{value:.1%}"
+
+    if ranking_metric == "gini":
+        return f"{value:.3f}"
+
+    return f"{value:,.0f}"
+
+def build_concentration_insight_summary(
+    summary_df: pd.DataFrame,
+    ranking_metric: str,
+):
+    """
+    Build top-line insight cards for the current concentration view.
+    """
+    if summary_df.empty:
+        return None
+
+    ranked = summary_df.sort_values(
+        [ranking_metric, "total_metric", "album_count"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+    median_visible_value = float(summary_df[ranking_metric].median())
+
+    if len(ranked) >= 2:
+        second = ranked.iloc[1]
+        gap = float(top[ranking_metric] - second[ranking_metric])
+        gap_text = format_concentration_value(gap, ranking_metric)
+        gap_caption = f"Gap vs #2 on {get_display_label(ranking_metric)}"
+    else:
+        gap_text = "NA"
+        gap_caption = "Only one visible group"
+
+    return [
+        (
+            "Top Group",
+            str(top["group"]),
+            f"{get_display_label(ranking_metric)} = {format_concentration_value(top[ranking_metric], ranking_metric)}",
+        ),
+        (
+            "Lead Gap",
+            gap_text,
+            gap_caption,
+        ),
+        (
+            "Typical Visible Value",
+            format_concentration_value(median_visible_value, ranking_metric),
+            f"Median {get_display_label(ranking_metric).lower()} across visible groups",
+        ),
+    ]
 
 def prepare_concentration_data(
     df: pd.DataFrame,
@@ -1020,40 +1309,6 @@ def build_pareto_df(
 
     return pareto_df
 
-def build_pareto_df(
-    plot_df: pd.DataFrame,
-    metric: str,
-    inspect_group: str,
-) -> pd.DataFrame:
-    """
-    Build Pareto-chart data for one selected group.
-
-    Args:
-        plot_df: Row-level concentration dataframe.
-        metric: Selected album performance metric.
-        inspect_group: Group name to inspect.
-
-    Returns:
-        pd.DataFrame: Album-level dataframe sorted descending by metric with
-        rank, share of group total, and cumulative share.
-    """
-    pareto_df = plot_df[plot_df["group"] == inspect_group].copy()
-
-    if pareto_df.empty:
-        return pd.DataFrame()
-
-    pareto_df = pareto_df.sort_values(metric, ascending=False).reset_index(drop=True)
-    pareto_df["rank_within_group"] = np.arange(1, len(pareto_df) + 1)
-
-    total_metric = float(pareto_df[metric].sum())
-    if total_metric <= 0:
-        return pd.DataFrame()
-
-    pareto_df["share_of_group_total"] = pareto_df[metric] / total_metric
-    pareto_df["cumulative_share"] = pareto_df["share_of_group_total"].cumsum()
-
-    return pareto_df
-
 def create_pareto_chart(
     pareto_df: pd.DataFrame,
     metric: str,
@@ -1288,6 +1543,21 @@ def main() -> None:
     median_gini = summary_df["gini"].median()
     median_top_1 = summary_df["top_1_share"].median()
 
+    st.caption(get_concentration_view_explainer(metric, ranking_metric))
+
+    st.markdown("**View Context**")
+    st.caption(
+        build_concentration_context_caption(
+            metric=metric,
+            group_var=group_var,
+            selected_groups=selected_groups,
+            top_n=top_n,
+            min_group_size=min_group_size,
+        )
+    )
+
+    render_concentration_insight_cards(summary_df, ranking_metric)
+
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
@@ -1333,6 +1603,7 @@ def main() -> None:
         label_font_size=label_font_size,
     )
     st.altair_chart(ranking_chart, width="stretch")
+    st.caption(build_ranking_supporting_insight(summary_df, ranking_metric))
 
     if not composition_df.empty:
         composition_chart = create_top_k_composition_chart(
@@ -1344,6 +1615,13 @@ def main() -> None:
             label_font_size=label_font_size,
         )
         st.altair_chart(composition_chart, width="stretch")
+        st.caption(
+            build_composition_supporting_insight(
+                composition_df=composition_df,
+                ranking_metric=ranking_metric,
+                metric=metric,
+            )
+        )
 
     if not lorenz_df.empty:
         lorenz_chart = create_lorenz_curve_chart(
@@ -1353,6 +1631,12 @@ def main() -> None:
             metric=metric,
         )
         st.altair_chart(lorenz_chart, width="stretch")
+        st.caption(
+            build_lorenz_supporting_insight(
+                summary_df=summary_df,
+                lorenz_groups=lorenz_groups,
+            )
+        )
     else:
         st.info("No Lorenz curve groups are currently available to display.")
 
@@ -1397,10 +1681,11 @@ def main() -> None:
                 group_var=group_var,
             )
             st.altair_chart(pareto_chart, width="stretch")
-
             st.caption(
-                "Bars show album-level performance ranked from highest to lowest. "
-                "The line shows cumulative share of the group's total."
+                build_pareto_supporting_insight(
+                    pareto_df=pareto_df,
+                    metric=metric,
+                )
             )
 
         if controls["show_detail_table"]:

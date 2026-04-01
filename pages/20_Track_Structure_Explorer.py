@@ -543,13 +543,395 @@ def plot_album_drilldown(
 
     return chart
 
+def build_track_structure_scope_caption(
+    global_controls: dict,
+    track_controls: dict,
+    filtered_tracks: pd.DataFrame,
+    album_options_df: pd.DataFrame,
+) -> str:
+    """
+    Build a short caption describing the current analysis scope.
+
+    Args:
+        global_controls: Shared global filter values.
+        track_controls: Track Structure control values.
+        filtered_tracks: Filtered track dataframe.
+        album_options_df: Unique visible albums for drilldown.
+
+    Returns:
+        str: Human-readable scope caption.
+    """
+    metric_phrase = get_display_label(track_controls["metric"])
+    if track_controls["transform_y"] == "Log1p":
+        metric_phrase = f"{metric_phrase} (log1p)"
+
+    parts = [
+        f"showing {len(filtered_tracks):,} visible tracks across {len(album_options_df):,} albums",
+        f"metric: {metric_phrase}",
+        f"positions 1–{track_controls['max_track_position']}",
+        f"minimum {track_controls['min_tracks_per_album']} observed tracks per album",
+    ]
+
+    if track_controls.get("selected_composers"):
+        parts.append(
+            f"{len(track_controls['selected_composers'])} selected composers"
+        )
+
+    year_range = global_controls.get("year_range")
+    if year_range:
+        parts.append(f"film years {year_range[0]}–{year_range[1]}")
+
+    return "Current scope: " + "; ".join(parts) + "."
+
+
+def build_track_structure_insight_summary(
+    summary_df: pd.DataFrame,
+    cohesion_ranked_df: pd.DataFrame,
+    track_controls: dict,
+) -> dict[str, str]:
+    """
+    Build reactive top-row insight cards for the Track Structure Explorer.
+
+    Args:
+        summary_df: Track-position summary dataframe.
+        cohesion_ranked_df: Visible ranked cohesion dataframe after sorting
+            and Top-N truncation.
+        track_controls: Page control values.
+
+    Returns:
+        dict[str, str]: Titles, values, and captions for three insight cards.
+    """
+    if summary_df.empty:
+        return {
+            "card1_title": "Strongest Visible Position",
+            "card1_value": "None",
+            "card1_caption": "No track-position summary is available.",
+            "card2_title": "Position Trend",
+            "card2_value": "None",
+            "card2_caption": "No endpoint comparison is available.",
+            "card3_title": "Cohesion Leader",
+            "card3_value": "None",
+            "card3_caption": "No cohesion ranking is available.",
+        }
+
+    if track_controls["summary_stat"] == "Mean":
+        stat_col = "mean_value"
+        stat_label = "mean"
+    else:
+        stat_col = "median_value"
+        stat_label = "median"
+
+    strongest_row = summary_df.sort_values(
+        [stat_col, "track_number"],
+        ascending=[False, True],
+    ).iloc[0]
+
+    first_row = summary_df.sort_values("track_number").iloc[0]
+    last_row = summary_df.sort_values("track_number").iloc[-1]
+
+    first_value = float(first_row[stat_col])
+    last_value = float(last_row[stat_col])
+    delta = last_value - first_value
+
+    if delta <= -0.05:
+        trend_value = "Front-loaded"
+        trend_caption = (
+            f"Visible {stat_label} performance declines from track "
+            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
+            f"{int(last_row['track_number'])} ({last_value:.2f})."
+        )
+    elif delta >= 0.05:
+        trend_value = "Back-loaded"
+        trend_caption = (
+            f"Visible {stat_label} performance rises from track "
+            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
+            f"{int(last_row['track_number'])} ({last_value:.2f})."
+        )
+    else:
+        trend_value = "Mostly flat"
+        trend_caption = (
+            f"Visible {stat_label} performance is fairly stable from track "
+            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
+            f"{int(last_row['track_number'])} ({last_value:.2f})."
+        )
+
+    if cohesion_ranked_df.empty:
+        cohesion_value = "None"
+        cohesion_caption = "No visible album cohesion result remains."
+    else:
+        cohesion_metric = track_controls["cohesion_metric"]
+        top_row = cohesion_ranked_df.iloc[0]
+        cohesion_value = (
+            f"{top_row['film_title']} — {top_row['album_title']}"
+        )
+        cohesion_caption = (
+            f"Highest visible {get_display_label(cohesion_metric).lower()} "
+            f"among the top {len(cohesion_ranked_df)} ranked albums at "
+            f"{float(top_row[cohesion_metric]):.3f}."
+        )
+
+    strongest_caption = (
+        f"Track {int(strongest_row['track_number'])} has the highest visible "
+        f"{stat_label} value at {float(strongest_row[stat_col]):.2f}."
+    )
+    if track_controls["summary_stat"] == "Both":
+        strongest_caption += " With Both selected, this card keys off the median line."
+
+    return {
+        "card1_title": "Strongest Visible Position",
+        "card1_value": f"Track {int(strongest_row['track_number'])}",
+        "card1_caption": strongest_caption,
+        "card2_title": "Position Trend",
+        "card2_value": trend_value,
+        "card2_caption": trend_caption,
+        "card3_title": "Cohesion Leader",
+        "card3_value": cohesion_value,
+        "card3_caption": cohesion_caption,
+    }
+
+
+def render_track_structure_insight_cards(
+    summary_df: pd.DataFrame,
+    cohesion_ranked_df: pd.DataFrame,
+    track_controls: dict,
+) -> None:
+    """
+    Render reactive insight cards for the Track Structure Explorer.
+
+    Args:
+        summary_df: Track-position summary dataframe.
+        cohesion_ranked_df: Visible ranked cohesion dataframe.
+        track_controls: Page control values.
+    """
+    insights = build_track_structure_insight_summary(
+        summary_df=summary_df,
+        cohesion_ranked_df=cohesion_ranked_df,
+        track_controls=track_controls,
+    )
+
+    st.markdown("### 🧠 Key Insights")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(insights["card1_title"], insights["card1_value"])
+        st.caption(insights["card1_caption"])
+
+    with col2:
+        st.metric(insights["card2_title"], insights["card2_value"])
+        st.caption(insights["card2_caption"])
+
+    with col3:
+        st.metric(insights["card3_title"], insights["card3_value"])
+        st.caption(insights["card3_caption"])
+
+
+def build_position_supporting_insight(
+    summary_df: pd.DataFrame,
+    track_controls: dict,
+) -> str:
+    """
+    Build a short supporting insight for the position summary chart.
+
+    Args:
+        summary_df: Track-position summary dataframe.
+        track_controls: Page control values.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if summary_df.empty:
+        return "No position insight is available."
+
+    if track_controls["summary_stat"] == "Mean":
+        stat_col = "mean_value"
+        stat_label = "mean"
+    else:
+        stat_col = "median_value"
+        stat_label = "median"
+
+    ordered_df = summary_df.sort_values("track_number").reset_index(drop=True)
+    strongest_row = ordered_df.sort_values(
+        [stat_col, "track_number"],
+        ascending=[False, True],
+    ).iloc[0]
+    weakest_row = ordered_df.sort_values(
+        [stat_col, "track_number"],
+        ascending=[True, True],
+    ).iloc[0]
+
+    sample_note = ""
+    if "n_tracks" in ordered_df.columns:
+        first_n = int(ordered_df.iloc[0]["n_tracks"])
+        last_n = int(ordered_df.iloc[-1]["n_tracks"])
+        sample_note = (
+            f" Sample sizes range from {first_n:,} tracks at position "
+            f"{int(ordered_df.iloc[0]['track_number'])} to {last_n:,} at "
+            f"position {int(ordered_df.iloc[-1]['track_number'])}."
+        )
+
+    return (
+        f"💡 Using the visible {stat_label} line, track "
+        f"{int(strongest_row['track_number'])} is strongest "
+        f"({float(strongest_row[stat_col]):.2f}) while track "
+        f"{int(weakest_row['track_number'])} is weakest "
+        f"({float(weakest_row[stat_col]):.2f}).{sample_note}"
+    )
+
+
+def build_scatter_supporting_insight(
+    scatter_df: pd.DataFrame,
+    track_controls: dict,
+) -> str:
+    """
+    Build a short supporting insight for the scatter section.
+
+    Args:
+        scatter_df: Scatterplot dataframe.
+        track_controls: Page control values.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if scatter_df.empty:
+        return "No scatter insight is available."
+
+    corr = scatter_df["track_number"].corr(scatter_df["metric_display"])
+    if pd.isna(corr):
+        return (
+            "The scatterplot shows the visible track-level spread directly, "
+            "but a simple linear trend is not stable under the current filters."
+        )
+
+    if corr <= -0.10:
+        direction = "downward"
+    elif corr >= 0.10:
+        direction = "upward"
+    else:
+        direction = "mostly flat"
+
+    color_note = ""
+    if track_controls.get("selected_composers"):
+        color_note = " Colors are locked to composer because a composer subset is selected."
+    elif track_controls["color_col"] != "None":
+        color_note = (
+            f" Colors are grouped by {get_display_label(track_controls['color_col']).lower()}."
+        )
+
+    trend_note = ""
+    if track_controls["show_trendline"]:
+        trend_note = " The fitted line should broadly match this direction."
+
+    return (
+        f"💡 The visible point cloud suggests a {direction} relationship between "
+        f"track position and displayed performance (Pearson r = {corr:.3f})."
+        f"{trend_note}{color_note}"
+    )
+
+
+def get_cohesion_metric_explainer(cohesion_metric: str) -> str:
+    """
+    Return a short explanation of the selected cohesion metric.
+
+    Args:
+        cohesion_metric: Selected cohesion metric column.
+
+    Returns:
+        str: Human-readable explanation.
+    """
+    explainers = {
+        "top_track_share": (
+            "Top track share measures how much of an album's total visible track performance "
+            "comes from its single strongest track."
+        ),
+        "top_track_to_median_ratio": (
+            "Top track to median ratio compares the strongest track with the album's typical "
+            "track, highlighting breakout-versus-balanced soundtracks."
+        ),
+        "track_metric_std_dev": (
+            "Track metric standard deviation measures how uneven visible track performance is "
+            "within the album overall."
+        ),
+    }
+    return explainers.get(cohesion_metric, get_display_label(cohesion_metric))
+
+
+def build_cohesion_supporting_insight(
+    cohesion_ranked_df: pd.DataFrame,
+    cohesion_metric: str,
+) -> str:
+    """
+    Build a short supporting insight for the cohesion ranking chart.
+
+    Args:
+        cohesion_ranked_df: Visible ranked cohesion dataframe.
+        cohesion_metric: Selected cohesion metric.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if cohesion_ranked_df.empty:
+        return "No cohesion insight is available."
+
+    top_row = cohesion_ranked_df.iloc[0]
+    median_value = float(cohesion_ranked_df[cohesion_metric].median())
+
+    return (
+        f"💡 Within the visible ranked set, the strongest album on "
+        f"{get_display_label(cohesion_metric).lower()} is "
+        f"{top_row['film_title']} — {top_row['album_title']} "
+        f"({float(top_row[cohesion_metric]):.3f}). The median across the "
+        f"currently ranked albums is {median_value:.3f}."
+    )
+
+
+def build_album_drilldown_caption(
+    drilldown_df: pd.DataFrame,
+    cohesion_metric: str,
+) -> str:
+    """
+    Build a short reactive caption for the selected album drilldown.
+
+    Args:
+        drilldown_df: Track rows for the selected album.
+        cohesion_metric: Selected cohesion metric.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if drilldown_df.empty:
+        return "No drilldown insight is available."
+
+    top_row = drilldown_df.sort_values(
+        ["metric_raw", "track_number"],
+        ascending=[False, True],
+    ).iloc[0]
+
+    total_metric = float(drilldown_df["metric_raw"].sum())
+    top_share = (
+        float(top_row["metric_raw"]) / total_metric
+        if total_metric > 0 else np.nan
+    )
+
+    if cohesion_metric == "top_track_share" and not pd.isna(top_share):
+        cohesion_note = f" Its top track accounts for {top_share:.1%} of the album's visible total."
+    else:
+        cohesion_note = ""
+
+    return (
+        f"Top visible track for this soundtrack is '{top_row['track_title']}' "
+        f"at position {int(top_row['track_number'])}, with a raw value of "
+        f"{float(top_row['metric_raw']):.2f}.{cohesion_note}"
+    )
+
 def main() -> None:
     """Render the Track Structure Explorer."""
     st.title("Track Structure Explorer")
     st.markdown(
         """
-        Analyze how track performance unfolds within a soundtrack, both across
-        all tracks in view and within typical track positions.
+        Analyze how performance unfolds within a soundtrack. This page combines
+        track-position summaries, track-level scatter, album cohesion ranking,
+        and soundtrack drilldown to show whether albums are front-loaded,
+        evenly distributed, or dominated by a standout track.
         """
     )
 
@@ -584,11 +966,25 @@ def main() -> None:
         track_controls=track_controls,
     )
 
+    if filtered_tracks.empty:
+        st.warning(
+            "No tracks remain under the current filters. Try broadening the film year "
+            "range, reducing the minimum tracks per album, or clearing composer restrictions."
+        )
+        return
+
     filtered_tracks = add_display_metric(
         track_df=filtered_tracks,
         metric_col=track_controls["metric"],
         transform_y=track_controls["transform_y"],
     )
+
+    if filtered_tracks.empty:
+        st.warning(
+            "No tracks remain after applying the selected display transform. "
+            "Try switching Transform Y to None or broadening the current filters."
+        )
+        return
 
     scatter_df = add_scatter_x_position(
         track_df=filtered_tracks,
@@ -598,9 +994,37 @@ def main() -> None:
 
     summary_df = build_position_summary_df(filtered_tracks)
 
+    cohesion_all_df = build_album_cohesion_df(filtered_tracks)
+    cohesion_metric = track_controls["cohesion_metric"]
+    cohesion_all_df = cohesion_all_df[
+        cohesion_all_df[cohesion_metric].notna()
+    ].copy()
+
+    cohesion_ranked_df = cohesion_all_df.sort_values(
+        cohesion_metric,
+        ascending=False,
+    ).head(track_controls["top_n_albums"]).copy()
+
+    album_options_df = build_album_drilldown_options(filtered_tracks)
+
     metric_label = get_display_label(track_controls["metric"])
     if track_controls["transform_y"] == "Log1p":
         metric_label = f"{metric_label} (log1p)"
+
+    st.caption(
+        build_track_structure_scope_caption(
+            global_controls=global_controls,
+            track_controls=track_controls,
+            filtered_tracks=filtered_tracks,
+            album_options_df=album_options_df,
+        )
+    )
+
+    render_track_structure_insight_cards(
+        summary_df=summary_df,
+        cohesion_ranked_df=cohesion_ranked_df,
+        track_controls=track_controls,
+    )
 
     st.subheader("Popularity by Track Position")
     st.altair_chart(
@@ -611,6 +1035,12 @@ def main() -> None:
             metric_label=metric_label,
         ),
         use_container_width=True,
+    )
+    st.caption(
+        build_position_supporting_insight(
+            summary_df=summary_df,
+            track_controls=track_controls,
+        )
     )
 
     if track_controls["show_summary_table"]:
@@ -632,18 +1062,12 @@ def main() -> None:
             ),
             use_container_width=True,
         )
-
-    cohesion_df = build_album_cohesion_df(filtered_tracks)
-
-    cohesion_metric = track_controls["cohesion_metric"]
-    cohesion_df = cohesion_df[
-        cohesion_df[cohesion_metric].notna()
-    ].copy()
-
-    cohesion_df = cohesion_df.sort_values(
-        cohesion_metric,
-        ascending=False,
-    ).head(track_controls["top_n_albums"])
+        st.caption(
+            build_scatter_supporting_insight(
+                scatter_df=scatter_df,
+                track_controls=track_controls,
+            )
+        )
 
     st.subheader("Album Cohesion Ranking")
     st.markdown(
@@ -652,17 +1076,26 @@ def main() -> None:
         within each album.
         """
     )
+    st.caption(
+        get_cohesion_metric_explainer(cohesion_metric)
+    )
 
     st.altair_chart(
         plot_album_cohesion_ranking(
-            cohesion_df=cohesion_df,
+            cohesion_df=cohesion_ranked_df,
             cohesion_metric=cohesion_metric,
         ),
         use_container_width=True,
     )
+    st.caption(
+        build_cohesion_supporting_insight(
+            cohesion_ranked_df=cohesion_ranked_df,
+            cohesion_metric=cohesion_metric,
+        )
+    )
 
     if track_controls["show_cohesion_table"]:
-        st.dataframe(cohesion_df, use_container_width=True)
+        st.dataframe(cohesion_ranked_df, use_container_width=True)
 
     st.subheader("Inspect an Album")
     st.markdown(
@@ -671,10 +1104,7 @@ def main() -> None:
         """
     )
 
-    album_options_df = build_album_drilldown_options(filtered_tracks)
-
     if not album_options_df.empty:
-
         selected_album_label = st.selectbox(
             "Album",
             options=album_options_df["album_label"].tolist(),
@@ -692,6 +1122,12 @@ def main() -> None:
                 metric_label=metric_label,
             ),
             use_container_width=True,
+        )
+        st.caption(
+            build_album_drilldown_caption(
+                drilldown_df=drilldown_df,
+                cohesion_metric=cohesion_metric,
+            )
         )
 
         if track_controls["show_album_track_table"]:

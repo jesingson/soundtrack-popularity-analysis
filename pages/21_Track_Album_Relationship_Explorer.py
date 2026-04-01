@@ -609,6 +609,426 @@ def create_scaling_scatter(
         },
     )
 
+def build_track_album_scope_caption(
+    controls: dict,
+    plot_df: pd.DataFrame,
+    metric_label: str,
+    y_agg_label: str,
+    dominance_label: str,
+) -> str:
+    """
+    Build a short caption describing the current Track–Album analysis scope.
+
+    Args:
+        controls: Sidebar control selections.
+        plot_df: Already filtered one-row-per-album dataframe.
+        metric_label: Display label for the selected comparison metric.
+        y_agg_label: Display label for the selected track aggregation.
+        dominance_label: Display label for the selected dominance framing.
+
+    Returns:
+        str: Human-readable scope caption.
+    """
+    parts = [
+        f"{len(plot_df):,} albums in view",
+        f"album {metric_label.lower()} vs {y_agg_label.lower()} {metric_label.lower()}",
+        f"dominance: {dominance_label.lower()}",
+        f"color: {controls['color_mode'].lower()}",
+    ]
+
+    if controls.get("use_log_scale"):
+        parts.append("log scale on")
+
+    year_range = controls.get("year_range")
+    if year_range:
+        parts.append(f"film years {year_range[0]}–{year_range[1]}")
+
+    if controls.get("selected_album_genres"):
+        parts.append(
+            f"album genres: {', '.join(controls['selected_album_genres'])}"
+        )
+
+    if controls.get("selected_film_genres"):
+        parts.append(
+            f"film genres: {', '.join(controls['selected_film_genres'])}"
+        )
+
+    if controls.get("selected_composers"):
+        parts.append(
+            f"{len(controls['selected_composers'])} selected composers"
+        )
+
+    if controls.get("selected_labels"):
+        parts.append(
+            f"{len(controls['selected_labels'])} selected labels"
+        )
+
+    return "Current scope: " + "; ".join(parts) + "."
+
+
+def build_track_album_insight_summary(
+    plot_df: pd.DataFrame,
+    album_col: str,
+    y_col: str,
+    dominance_col: str,
+    dominance_label: str,
+) -> dict[str, str]:
+    """
+    Build reactive top-row insight cards for the Track–Album Relationship Explorer.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        album_col: Selected album metric column.
+        y_col: Selected track aggregation column.
+        dominance_col: Selected dominance metric column.
+        dominance_label: Display label for the selected dominance framing.
+
+    Returns:
+        dict[str, str]: Titles, values, and captions for three insight cards.
+    """
+    if plot_df.empty:
+        return {
+            "card1_title": "Parity Pattern",
+            "card1_value": "None",
+            "card1_caption": "No visible albums remain under the current settings.",
+            "card2_title": "Typical Dominance",
+            "card2_value": "None",
+            "card2_caption": "No dominance summary is available.",
+            "card3_title": "Most Common Bucket",
+            "card3_value": "None",
+            "card3_caption": "No dominance bucket pattern is available.",
+        }
+
+    above_parity_mask = plot_df[y_col] >= plot_df[album_col]
+    above_count = int(above_parity_mask.sum())
+    total_count = int(len(plot_df))
+    above_share = above_count / total_count if total_count > 0 else 0.0
+
+    if above_share >= 0.60:
+        parity_value = "Mostly above parity"
+    elif above_share <= 0.40:
+        parity_value = "Mostly below parity"
+    else:
+        parity_value = "Mixed parity"
+
+    parity_caption = (
+        f"{above_share:.1%} of visible albums have the selected track aggregation "
+        "at or above the album metric."
+    )
+
+    dominance_median = float(plot_df[dominance_col].median())
+    dominance_value = (
+        f"{dominance_median:.2f}"
+        if "total track" in dominance_label.lower()
+        else f"{dominance_median:.2f}x"
+    )
+
+    dominance_caption = (
+        f"Median visible {dominance_label.lower()} across the current filtered albums."
+    )
+
+    bucket_mode_series = (
+        plot_df["dominance_bucket_for_display"]
+        .dropna()
+        .astype(str)
+        .value_counts()
+    )
+
+    if bucket_mode_series.empty:
+        bucket_value = "None"
+        bucket_caption = "No visible dominance buckets are available."
+    else:
+        bucket_value = str(bucket_mode_series.index[0])
+        bucket_count = int(bucket_mode_series.iloc[0])
+        bucket_share = bucket_count / total_count if total_count > 0 else 0.0
+        bucket_caption = (
+            f"The most common visible dominance bucket contains {bucket_count:,} albums "
+            f"({bucket_share:.1%} of the current view)."
+        )
+
+    return {
+        "card1_title": "Parity Pattern",
+        "card1_value": parity_value,
+        "card1_caption": parity_caption,
+        "card2_title": "Typical Dominance",
+        "card2_value": dominance_value,
+        "card2_caption": dominance_caption,
+        "card3_title": "Most Common Bucket",
+        "card3_value": bucket_value,
+        "card3_caption": bucket_caption,
+    }
+
+
+def render_track_album_insight_cards(
+    plot_df: pd.DataFrame,
+    album_col: str,
+    y_col: str,
+    dominance_col: str,
+    dominance_label: str,
+) -> None:
+    """
+    Render reactive insight cards for the Track–Album Relationship Explorer.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        album_col: Selected album metric column.
+        y_col: Selected track aggregation column.
+        dominance_col: Selected dominance metric column.
+        dominance_label: Display label for the selected dominance framing.
+    """
+    insights = build_track_album_insight_summary(
+        plot_df=plot_df,
+        album_col=album_col,
+        y_col=y_col,
+        dominance_col=dominance_col,
+        dominance_label=dominance_label,
+    )
+
+    st.markdown("### 🧠 Key Insights")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(insights["card1_title"], insights["card1_value"])
+        st.caption(insights["card1_caption"])
+
+    with col2:
+        st.metric(insights["card2_title"], insights["card2_value"])
+        st.caption(insights["card2_caption"])
+
+    with col3:
+        st.metric(insights["card3_title"], insights["card3_value"])
+        st.caption(insights["card3_caption"])
+
+
+def build_hero_scatter_supporting_insight(
+    plot_df: pd.DataFrame,
+    album_col: str,
+    y_col: str,
+    y_agg_label: str,
+    metric_label: str,
+) -> str:
+    """
+    Build a short supporting insight for the hero scatter.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        album_col: Selected album metric column.
+        y_col: Selected track aggregation column.
+        y_agg_label: Display label for the selected track aggregation.
+        metric_label: Display label for the selected comparison metric.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if plot_df.empty:
+        return "No hero-scatter insight is available."
+
+    diff = plot_df[y_col] - plot_df[album_col]
+    median_diff = float(diff.median())
+    above_share = float((plot_df[y_col] >= plot_df[album_col]).mean())
+
+    if above_share >= 0.60:
+        pattern = "sit mostly above parity"
+    elif above_share <= 0.40:
+        pattern = "sit mostly below parity"
+    else:
+        pattern = "straddle parity fairly evenly"
+
+    if median_diff > 0:
+        diff_phrase = (
+            f"The typical visible album has {y_agg_label.lower()} {metric_label.lower()} "
+            "above the album-level metric."
+        )
+    elif median_diff < 0:
+        diff_phrase = (
+            f"The typical visible album has {y_agg_label.lower()} {metric_label.lower()} "
+            "below the album-level metric."
+        )
+    else:
+        diff_phrase = (
+            "The typical visible album sits almost exactly at parity."
+        )
+
+    return (
+        f"💡 Under the current settings, albums {pattern}: "
+        f"{above_share:.1%} are at or above the parity line. {diff_phrase}"
+    )
+
+
+def build_histogram_supporting_insight(
+    plot_df: pd.DataFrame,
+    dominance_col: str,
+    dominance_label: str,
+    dominance_metric_key: str,
+) -> str:
+    """
+    Build a short supporting insight for the dominance histogram.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        dominance_col: Selected dominance metric column.
+        dominance_label: Display label for the selected dominance framing.
+        dominance_metric_key: Dominance metric key from the controls.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if plot_df.empty:
+        return "No dominance-distribution insight is available."
+
+    median_value = float(plot_df[dominance_col].median())
+    bucket_counts = (
+        plot_df["dominance_bucket_for_display"]
+        .dropna()
+        .astype(str)
+        .value_counts()
+    )
+
+    if bucket_counts.empty:
+        bucket_phrase = "No visible dominance bucket stands out."
+    else:
+        top_bucket = str(bucket_counts.index[0])
+        top_bucket_share = float(bucket_counts.iloc[0] / len(plot_df))
+        bucket_phrase = (
+            f"The most common visible bucket is {top_bucket} "
+            f"({top_bucket_share:.1%} of albums)."
+        )
+
+    if dominance_metric_key == "top_to_total":
+        value_phrase = (
+            f"The median visible {dominance_label.lower()} is {median_value:.2f}, "
+            "so the top track typically accounts for a moderate share of total track performance."
+        )
+    else:
+        value_phrase = (
+            f"The median visible {dominance_label.lower()} is {median_value:.2f}x, "
+            "which is best read as a diagnostic comparison rather than a literal share."
+        )
+
+    return f"💡 {value_phrase} {bucket_phrase}"
+
+
+def build_scaling_supporting_insight(
+    plot_df: pd.DataFrame,
+    album_col: str,
+    dominance_col: str,
+    dominance_label: str,
+) -> str:
+    """
+    Build a short supporting insight for the album-size vs dominance scatter.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        album_col: Selected album metric column.
+        dominance_col: Selected dominance metric column.
+        dominance_label: Display label for the selected dominance framing.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if plot_df.empty:
+        return "No scaling insight is available."
+
+    corr = plot_df[album_col].corr(plot_df[dominance_col], method="pearson")
+
+    if pd.isna(corr):
+        return (
+            "The current filtered sample does not support a stable linear read on "
+            "album size versus dominance."
+        )
+
+    if corr >= 0.20:
+        pattern = "larger albums tend to look more top-heavy"
+    elif corr <= -0.20:
+        pattern = "larger albums tend to look less top-heavy"
+    else:
+        pattern = "album size and dominance look broadly weakly related"
+
+    return (
+        f"💡 In the current view, {pattern} based on {dominance_label.lower()} "
+        f"(Pearson r = {corr:.3f})."
+    )
+
+def build_parity_explainer(
+    y_agg_label: str,
+    metric_label: str,
+) -> str:
+    """
+    Build a short plain-English explainer for the hero scatter parity line.
+
+    Args:
+        y_agg_label: Display label for the selected track aggregation.
+        metric_label: Display label for the selected comparison metric.
+
+    Returns:
+        str: Short explainer sentence.
+    """
+    return (
+        f"Points above the dashed parity line have {y_agg_label.lower()} "
+        f"{metric_label.lower()} at or above the album-level {metric_label.lower()}; "
+        "points below the line fall short of album-level performance."
+    )
+
+
+def build_extreme_album_caption(
+    plot_df: pd.DataFrame,
+    dominance_col: str,
+    dominance_label: str,
+) -> str:
+    """
+    Build a short caption highlighting the most dominant visible album.
+
+    Args:
+        plot_df: Already filtered one-row-per-album dataframe.
+        dominance_col: Selected dominance metric column.
+        dominance_label: Display label for the selected dominance framing.
+
+    Returns:
+        str: Short caption naming the most extreme visible album.
+    """
+    if plot_df.empty:
+        return "No extreme album callout is available."
+
+    top_row = plot_df.sort_values(
+        [dominance_col, "film_title", "album_title"],
+        ascending=[False, True, True],
+    ).iloc[0]
+
+    value = float(top_row[dominance_col])
+    value_text = (
+        f"{value:.2f}"
+        if "total track" in dominance_label.lower()
+        else f"{value:.2f}x"
+    )
+
+    return (
+        f"Most top-heavy visible album: {top_row['film_title']} — "
+        f"{top_row['album_title']} ({value_text} on {dominance_label.lower()})."
+    )
+
+
+def build_top3_mode_caption(
+    y_agg_key: str,
+    y_agg_label: str,
+) -> str:
+    """
+    Build an optional caption for Top 3 mode.
+
+    Args:
+        y_agg_key: Raw track aggregation key.
+        y_agg_label: Display label for the selected track aggregation.
+
+    Returns:
+        str: Optional explanatory caption.
+    """
+    if y_agg_key != "top3":
+        return ""
+
+    return (
+        f"You are using {y_agg_label.lower()}, so this view emphasizes clustered "
+        "multi-track strength rather than dependence on a single breakout track."
+    )
+
 def main() -> None:
     """Render the Track–Album Relationship Explorer page."""
     st.set_page_config(
@@ -621,18 +1041,10 @@ def main() -> None:
     st.write(
         """
         Explore how track-level performance aggregates into album-level success.
-
-        This page asks whether strong albums are driven by one breakout track,
-        a small cluster of standout tracks, or broader consistency across the
-        soundtrack.
+        This page compares album outcomes with selected track summaries so you can
+        see whether stronger soundtracks are driven mainly by one breakout track,
+        a stronger top-three cluster, or broader depth across the album.
         """
-    )
-
-    st.caption(
-        "Use this page to compare album-level success to track-level strength. "
-        "The hero scatter compares the album metric to a selected track aggregation, "
-        "the histogram shows how concentrated performance is in the top track, "
-        "and the scaling chart asks whether larger albums are more balanced or more top-heavy."
     )
 
     explorer_df = build_track_album_relationship_df()
@@ -657,7 +1069,6 @@ def main() -> None:
     composer_options = sorted(
         explorer_df["composer_primary_clean"].dropna().astype(str).unique().tolist()
     )
-
     label_options = sorted(
         explorer_df["label_names"].dropna().astype(str).unique().tolist()
     )
@@ -691,9 +1102,9 @@ def main() -> None:
     selected_film_genres = controls["selected_film_genres"]
     selected_composers = controls["selected_composers"]
     selected_labels = controls["selected_labels"]
-
     show_table = controls["show_data_table"]
 
+    y_agg_label = TRACK_AGG_LABELS[y_agg_key]
     dominance_label = get_dominance_label(dominance_metric_key, metric_label)
 
     if dominance_metric_key == "top_to_total":
@@ -709,6 +1120,13 @@ def main() -> None:
             "Because album and track metrics may be tabulated differently, treat this as a diagnostic comparison rather than a literal share."
         )
 
+    top3_caption = build_top3_mode_caption(
+        y_agg_key=y_agg_key,
+        y_agg_label=y_agg_label,
+    )
+    if top3_caption:
+        st.caption(top3_caption)
+
     plot_df = explorer_df.copy()
 
     plot_df = plot_df[
@@ -721,26 +1139,24 @@ def main() -> None:
             ALBUM_FILTER_FLAG_MAP[label]
             for label in selected_album_genres
             if label in ALBUM_FILTER_FLAG_MAP
-               and ALBUM_FILTER_FLAG_MAP[label] in plot_df.columns
+            and ALBUM_FILTER_FLAG_MAP[label] in plot_df.columns
         ]
-
         if selected_album_flags:
             plot_df = plot_df[
                 plot_df[selected_album_flags].fillna(0).sum(axis=1) > 0
-                ].copy()
+            ].copy()
 
     if selected_film_genres:
         selected_film_flags = [
             FILM_FILTER_FLAG_MAP[label]
             for label in selected_film_genres
             if label in FILM_FILTER_FLAG_MAP
-               and FILM_FILTER_FLAG_MAP[label] in plot_df.columns
+            and FILM_FILTER_FLAG_MAP[label] in plot_df.columns
         ]
-
         if selected_film_flags:
             plot_df = plot_df[
                 plot_df[selected_film_flags].fillna(0).sum(axis=1) > 0
-                ].copy()
+            ].copy()
 
     if selected_composers:
         plot_df = plot_df[
@@ -757,7 +1173,9 @@ def main() -> None:
     ).copy()
 
     if use_log_scale:
-        plot_df = plot_df[(plot_df[album_col] > 0) & (plot_df[y_col] > 0)].copy()
+        plot_df = plot_df[
+            (plot_df[album_col] > 0) & (plot_df[y_col] > 0)
+        ].copy()
 
     if plot_df.empty:
         st.warning("No rows remain after applying the current filters.")
@@ -769,26 +1187,53 @@ def main() -> None:
 
     parity_df = build_parity_line_df(plot_df, album_col, y_col)
 
-    col1, col2, col3, col4 = st.columns(4)
+    st.caption(
+        build_track_album_scope_caption(
+            controls=controls,
+            plot_df=plot_df,
+            metric_label=metric_label,
+            y_agg_label=y_agg_label,
+            dominance_label=dominance_label,
+        )
+    )
 
-    with col1:
+    render_track_album_insight_cards(
+        plot_df=plot_df,
+        album_col=album_col,
+        y_col=y_col,
+        dominance_col=dominance_col,
+        dominance_label=dominance_label,
+    )
+
+    with st.expander("Quick read of this page", expanded=False):
+        st.write(
+            build_parity_explainer(
+                y_agg_label=y_agg_label,
+                metric_label=metric_label,
+            )
+        )
+
+    util_col1, util_col2, util_col3 = st.columns(3)
+
+    with util_col1:
         st.metric("Albums in View", f"{len(plot_df):,}")
 
-    with col2:
+    with util_col2:
         st.metric("Median Track Count", f"{plot_df['n_tracks'].median():.0f}")
 
-    with col3:
-        st.metric(
-            "Median Top / Album",
-            f"{plot_df[top_to_album_col].median():.2f}x",
-        )
+    with util_col3:
+        if dominance_metric_key == "top_to_total":
+            st.metric(
+                f"Median {dominance_label}",
+                f"{plot_df[dominance_col].median():.2f}",
+            )
+        else:
+            st.metric(
+                f"Median {dominance_label}",
+                f"{plot_df[dominance_col].median():.2f}x",
+            )
 
-    with col4:
-        st.metric(
-            f"Median {dominance_label}",
-            f"{plot_df[dominance_col].median():.2f}x",
-        )
-
+    st.subheader("Album vs. Track Aggregation")
     hero_chart = create_hero_scatter(
         plot_df=plot_df,
         parity_df=parity_df,
@@ -797,30 +1242,54 @@ def main() -> None:
         color_mode=color_mode,
         use_log_scale=use_log_scale,
         metric_label=metric_label,
-        y_agg_label=TRACK_AGG_LABELS[y_agg_key],
+        y_agg_label=y_agg_label,
         dominance_metric_key=dominance_metric_key,
         dominance_label=dominance_label,
     )
     st.altair_chart(hero_chart, width="stretch")
+    st.caption(
+        build_hero_scatter_supporting_insight(
+            plot_df=plot_df,
+            album_col=album_col,
+            y_col=y_col,
+            y_agg_label=y_agg_label,
+            metric_label=metric_label,
+        )
+    )
 
+    st.subheader("Dominance Distribution")
     hist_chart = create_dominance_histogram(
         plot_df=plot_df,
         dominance_col=dominance_col,
         dominance_label=dominance_label,
     )
     st.altair_chart(hist_chart, width="stretch")
+    st.caption(
+        build_histogram_supporting_insight(
+            plot_df=plot_df,
+            dominance_col=dominance_col,
+            dominance_label=dominance_label,
+            dominance_metric_key=dominance_metric_key,
+        )
+    )
+    st.caption(
+        build_extreme_album_caption(
+            plot_df=plot_df,
+            dominance_col=dominance_col,
+            dominance_label=dominance_label,
+        )
+    )
 
     if dominance_metric_key == "top_to_total":
         st.caption(
-            "This histogram shows how concentrated total track performance is in the top track. "
-            "For example, 0.50 means the top track accounts for half of all track-level performance."
+            "In this framing, 0.50 means the top track contributes half of the soundtrack's visible total track performance."
         )
     else:
         st.caption(
-            "This histogram compares the top track directly to the album-level metric. "
-            "Values above 1x mean the top track exceeds the album-level count, which can happen because album and track metrics are tabulated differently."
+            "In this framing, values above 1x mean the top track exceeds the album-level count, which can happen because album and track metrics are tabulated differently."
         )
 
+    st.subheader("Album Size vs. Dominance")
     scaling_chart = create_scaling_scatter(
         plot_df=plot_df,
         album_col=album_col,
@@ -832,12 +1301,14 @@ def main() -> None:
         dominance_metric_key=dominance_metric_key,
     )
     st.altair_chart(scaling_chart, width="stretch")
-
-    if dominance_metric_key == "top_to_total":
-        st.caption(
-            "In this mode, the y-axis ranges from 0 to 1. "
-            "Higher values mean the top track contributes a larger share of total track performance."
+    st.caption(
+        build_scaling_supporting_insight(
+            plot_df=plot_df,
+            album_col=album_col,
+            dominance_col=dominance_col,
+            dominance_label=dominance_label,
         )
+    )
 
     if show_table:
         preferred_cols = [
@@ -854,10 +1325,30 @@ def main() -> None:
             dominance_col,
             dominance_bucket_col,
         ]
-        table_cols = [col for col in preferred_cols if col in plot_df.columns]
+
+        table_cols = []
+        seen = set()
+        for col in preferred_cols:
+            if col in plot_df.columns and col not in seen:
+                table_cols.append(col)
+                seen.add(col)
+
+        table_df = rename_columns_for_display(plot_df[table_cols]).copy()
+
+        deduped_cols = []
+        seen_display = {}
+        for col in table_df.columns:
+            if col not in seen_display:
+                seen_display[col] = 1
+                deduped_cols.append(col)
+            else:
+                seen_display[col] += 1
+                deduped_cols.append(f"{col} ({seen_display[col]})")
+        table_df.columns = deduped_cols
+
         st.subheader("Source Data")
         st.dataframe(
-            rename_columns_for_display(plot_df[table_cols]),
+            table_df,
             width="stretch",
             hide_index=True,
         )

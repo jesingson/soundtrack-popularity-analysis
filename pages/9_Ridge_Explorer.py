@@ -1,3 +1,5 @@
+from imaplib import Debug
+
 import streamlit as st
 
 import ridge_analysis as ridge
@@ -122,6 +124,198 @@ def build_ridge_outputs_for_features(
 
     return ridge_outputs, phase2_outputs
 
+def build_ridge_scope_caption(
+    controls: dict,
+    selected_features: list[str],
+    n_ridges: int,
+) -> str:
+    """
+    Build a short caption describing the current ridge scope.
+
+    Args:
+        controls: Sidebar control selections.
+        selected_features: Selected ridge features.
+        n_ridges: Number of rendered ridge rows.
+
+    Returns:
+        str: Human-readable scope caption.
+    """
+    preset_label = PRESET_LABELS.get(
+        controls["preset_key"],
+        controls["preset_key"],
+    )
+
+    mode_phrase = (
+        "custom feature selection"
+        if controls["preset_key"] == "custom"
+        else f"preset '{preset_label}'"
+    )
+
+    return (
+        f"Current scope: {mode_phrase}, showing {n_ridges} binary feature "
+        f"splits with {controls['bins']} density bins, smoothing window "
+        f"{controls['smooth_window']}, and minimum group size "
+        f"{controls['min_group_n']}."
+    )
+
+
+def build_ridge_insight_summary(
+    order_df,
+) -> dict[str, str]:
+    """
+    Build a compact narrative summary from the ridge ordering dataframe.
+
+    Args:
+        order_df: Ridge ordering dataframe indexed by feature label, with
+            columns 'No', 'Yes', and 'median_gap'.
+
+    Returns:
+        dict[str, str]: Titles, values, and captions for three insight cards.
+    """
+    if order_df.empty:
+        return {
+            "card1_title": "Largest Median Gap",
+            "card1_value": "None",
+            "card1_caption": "No ridge features are available under the current settings.",
+            "card2_title": "Direction of Separation",
+            "card2_value": "None",
+            "card2_caption": "No directional split is available.",
+            "card3_title": "Overall Pattern",
+            "card3_value": "None",
+            "card3_caption": "No overall ridge pattern is available.",
+        }
+
+    top_feature_label = str(order_df.index[0])
+    top_row = order_df.iloc[0]
+
+    top_gap = float(top_row["median_gap"])
+    top_no = float(top_row["No"])
+    top_yes = float(top_row["Yes"])
+
+    if top_yes > top_no:
+        direction_value = "Yes above No"
+        direction_caption = (
+            f"For the top split, '{top_feature_label}', the Yes group median "
+            f"({top_yes:.3f}) is above the No group median ({top_no:.3f})."
+        )
+    elif top_yes < top_no:
+        direction_value = "No above Yes"
+        direction_caption = (
+            f"For the top split, '{top_feature_label}', the No group median "
+            f"({top_no:.3f}) is above the Yes group median ({top_yes:.3f})."
+        )
+    else:
+        direction_value = "Tie"
+        direction_caption = (
+            f"For the top split, '{top_feature_label}', the Yes and No group "
+            f"medians are equal at {top_yes:.3f}."
+        )
+
+    mean_gap = float(order_df["median_gap"].mean())
+    median_gap = float(order_df["median_gap"].median())
+
+    return {
+        "card1_title": "Largest Median Gap",
+        "card1_value": top_feature_label,
+        "card1_caption": (
+            f"Top-ranked split with a median gap of {top_gap:.3f}."
+        ),
+        "card2_title": "Direction of Separation",
+        "card2_value": direction_value,
+        "card2_caption": direction_caption,
+        "card3_title": "Overall Pattern",
+        "card3_value": f"Avg gap {mean_gap:.3f}",
+        "card3_caption": (
+            f"Across visible features, the median gap is {median_gap:.3f} at the median, "
+            "so the page is showing moderate separation concentrated near the top rows."
+        ),
+    }
+
+
+def render_ridge_insight_cards(order_df) -> None:
+    """
+    Render the three narrative insight cards for the ridge page.
+
+    Args:
+        order_df: Ridge ordering dataframe.
+    """
+    insights = build_ridge_insight_summary(order_df)
+
+    st.markdown("### 🧠 Key Insights")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            insights["card1_title"],
+            insights["card1_value"],
+        )
+        st.caption(insights["card1_caption"])
+
+    with col2:
+        st.metric(
+            insights["card2_title"],
+            insights["card2_value"],
+        )
+        st.caption(insights["card2_caption"])
+
+    with col3:
+        st.metric(
+            insights["card3_title"],
+            insights["card3_value"],
+        )
+        st.caption(insights["card3_caption"])
+
+
+def build_ridge_supporting_insight(order_df) -> str:
+    """
+    Build a short supporting sentence for the main ridge chart.
+
+    Args:
+        order_df: Ridge ordering dataframe.
+
+    Returns:
+        str: Short chart-supporting insight.
+    """
+    if order_df.empty:
+        return "No ridge ordering insight is available."
+
+    top_feature_label = str(order_df.index[0])
+    top_gap = float(order_df.iloc[0]["median_gap"])
+
+    bottom_feature_label = str(order_df.index[-1])
+    bottom_gap = float(order_df.iloc[-1]["median_gap"])
+
+    return (
+        f"💡 Rows are ordered by median separation, so '{top_feature_label}' "
+        f"shows the strongest visible split ({top_gap:.3f}), while "
+        f"'{bottom_feature_label}' is the weakest visible split "
+        f"({bottom_gap:.3f}) under the current settings."
+    )
+
+
+def build_selected_feature_caption(
+    controls: dict,
+    selected_features: list[str],
+) -> str:
+    """
+    Build a compact caption listing the selected raw feature columns.
+
+    Args:
+        controls: Sidebar control selections.
+        selected_features: Selected feature column names.
+
+    Returns:
+        str: Human-readable feature list caption.
+    """
+    if not selected_features:
+        return "No selected features."
+
+    if controls["preset_key"] == "custom":
+        prefix = "Selected custom features"
+    else:
+        prefix = "Selected preset features"
+
+    return f"{prefix}: {', '.join(selected_features)}."
 
 def main() -> None:
     """
@@ -137,8 +331,9 @@ def main() -> None:
     st.write(
         """
         Compare soundtrack listener distributions across binary feature splits.
-        This view uses the same validated ridge-density pipeline as the notebook,
-        including precomputed density curves and median-gap ordering.
+        This page is designed to show which feature-based Yes/No groupings most
+        clearly separate listener outcomes, while preserving the validated
+        ridge-density pipeline used in the notebook workflow.
         """
     )
 
@@ -190,6 +385,8 @@ def main() -> None:
         min_group_n=controls["min_group_n"],
     )
 
+    order_df = phase2_outputs["order_df"]
+
     n_ridges = len(phase2_outputs["labels_df"])
     chart_height = max(500, n_ridges * 32)
 
@@ -208,15 +405,28 @@ def main() -> None:
         left_padding=300,
     )
 
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    with metric_col1:
-        st.metric("Features shown", n_ridges)
-    with metric_col2:
-        st.metric("Density bins", controls["bins"])
-    with metric_col3:
-        st.metric("Minimum group size", controls["min_group_n"])
+    st.caption(
+        build_ridge_scope_caption(
+            controls=controls,
+            selected_features=selected_features,
+            n_ridges=n_ridges,
+        )
+    )
+
+    render_ridge_insight_cards(order_df)
+
+    st.caption(
+        build_selected_feature_caption(
+            controls=controls,
+            selected_features=selected_features,
+        )
+    )
 
     st.altair_chart(chart, width="stretch")
+
+    st.caption(
+        build_ridge_supporting_insight(order_df)
+    )
 
     if controls["show_order_table"]:
         st.subheader("Feature Ordering Table")

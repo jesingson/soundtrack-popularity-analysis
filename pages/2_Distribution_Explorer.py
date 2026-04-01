@@ -562,6 +562,338 @@ def build_source_table(
     return rename_columns_for_display(table_df)
 
 
+# ADD THESE NEW FUNCTIONS (place above main())
+
+def get_view_type_explainer(view_type, metric, use_log, group_var):
+    metric_label = get_display_label(metric)
+    scale_text = " using log10 scale" if use_log else ""
+    group_text = (
+        f", grouped by {get_display_label(group_var)}"
+        if group_var != "None"
+        else ""
+    )
+
+    explainers = {
+        "Histogram": f"Histogram = count of albums per value range for {metric_label}{scale_text}{group_text}.",
+        "Density": f"Density = smoothed distribution of {metric_label}{scale_text}{group_text}. Useful for shape + overlap.",
+        "CDF": f"CDF = cumulative share of albums ≤ value for {metric_label}{scale_text}{group_text}.",
+    }
+    return explainers.get(view_type, "")
+
+
+def build_distribution_context_caption(
+    metric: str,
+    use_log: bool,
+    group_var: str,
+    selected_groups: list[str],
+    top_n: int | None,
+) -> str:
+    """
+    Build a natural-language caption describing the current distribution scope.
+    """
+    metric_label = get_display_label(metric)
+
+    if group_var == "None":
+        if use_log:
+            return f"Showing the distribution of {metric_label} on the log10 scale across all albums in view."
+        return f"Showing the distribution of {metric_label} across all albums in view."
+
+    group_label = get_display_label(group_var).lower()
+
+    if selected_groups:
+        if len(selected_groups) <= 5:
+            group_scope = f"the selected {group_label} values ({', '.join(selected_groups)})"
+        else:
+            shown = ", ".join(selected_groups[:5])
+            group_scope = f"the selected {group_label} values ({shown}, ...)"
+    else:
+        group_scope = f"the top {top_n} {group_label} groups by album count"
+
+    if use_log:
+        return f"Comparing {metric_label} on the log10 scale across {group_scope}."
+    return f"Comparing {metric_label} across {group_scope}."
+
+
+def build_distribution_insight_summary(
+    plot_df: pd.DataFrame,
+    metric: str,
+    group_var: str,
+    use_log: bool,
+) -> list[tuple[str, str, str]] | None:
+    """
+    Build top-line insight cards for the current distribution view.
+    """
+    if plot_df.empty:
+        return None
+
+    label_suffix = " (log10)" if use_log else ""
+
+    if group_var == "None":
+        median = float(plot_df["value"].median())
+        p10 = float(plot_df["value"].quantile(0.10))
+        p90 = float(plot_df["value"].quantile(0.90))
+        spread = p90 - p10
+        tail = (p90 / median) if median else 0.0
+
+        return [
+            ("Typical Value", f"{median:,.2f}", f"Median{label_suffix} across albums"),
+            ("Spread", f"{spread:,.2f}", f"P90 - P10{label_suffix}"),
+            ("Tail Strength", f"{tail:,.2f}×", f"Upper-tail stretch{label_suffix}"),
+        ]
+
+    summary = (
+        plot_df.groupby("group")["value"]
+        .agg(["count", "median"])
+        .reset_index()
+    )
+
+    ranked = summary.sort_values(
+        ["median", "count", "group"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top = ranked.iloc[0]
+    largest = summary.sort_values(
+        ["count", "median", "group"],
+        ascending=[False, False, True],
+    ).iloc[0]
+
+    if len(ranked) >= 2:
+        median_gap = float(ranked.iloc[0]["median"] - ranked.iloc[1]["median"])
+        gap_value = f"{median_gap:,.2f}"
+        gap_caption = f"Gap between top two medians{label_suffix}"
+    else:
+        gap_value = "NA"
+        gap_caption = "Only one visible group"
+
+    return [
+        ("Top Median Group", str(top["group"]), f"Median{label_suffix} = {top['median']:,.2f}"),
+        ("Median Gap", gap_value, gap_caption),
+        ("Largest Group", str(largest["group"]), f"{int(largest['count']):,} albums"),
+    ]
+
+
+def render_distribution_insight_cards(
+    plot_df: pd.DataFrame,
+    metric: str,
+    group_var: str,
+    use_log: bool,
+) -> None:
+    """
+    Render top-line insight cards for the distribution view.
+    """
+    insights = build_distribution_insight_summary(
+        plot_df=plot_df,
+        metric=metric,
+        group_var=group_var,
+        use_log=use_log,
+    )
+    if not insights:
+        return
+
+    st.markdown("### 🧠 Key Insights")
+    cols = st.columns(3)
+
+    for i, (title, value, caption) in enumerate(insights):
+        with cols[i]:
+            st.metric(title, value)
+            st.caption(caption)
+
+def build_distribution_supporting_insight(
+    plot_df: pd.DataFrame,
+    metric: str,
+    group_var: str,
+    use_log: bool,
+    view_type: str,
+    selected_groups: list[str],
+    top_n: int | None,
+) -> str:
+    """
+    Build a short supporting insight for the current distribution view.
+
+    The narrative adapts to:
+        - raw vs log scale
+        - grouped vs ungrouped view
+        - histogram vs density vs CDF framing
+        - selected groups vs top-N visible groups
+    """
+    if plot_df.empty:
+        return "No visible pattern remains to summarize."
+
+    metric_label = get_display_label(metric)
+    grouped = group_var != "None"
+
+    values = plot_df["value"].dropna().astype(float)
+
+    if values.empty:
+        return "No visible pattern remains to summarize."
+
+    median = float(values.median())
+    mean = float(values.mean())
+    p10 = float(values.quantile(0.10))
+    p90 = float(values.quantile(0.90))
+    spread = p90 - p10
+
+    # Build honest scope language.
+    if grouped:
+        if selected_groups:
+            scope_text = "among the selected groups"
+        elif top_n is not None:
+            scope_text = f"among the top {top_n} visible groups by album count"
+        else:
+            scope_text = "across the visible groups"
+    else:
+        scope_text = "across albums in view"
+
+    # Characterize shape differently on raw vs log scale.
+    if use_log:
+        mean_minus_median = mean - median
+        p90_minus_median = p90 - median
+
+        if mean_minus_median >= 0.30 or p90_minus_median >= 1.00:
+            shape = "still meaningfully right-skewed even after log compression"
+        elif mean_minus_median >= 0.15 or p90_minus_median >= 0.60:
+            shape = "moderately right-skewed on the log scale"
+        else:
+            shape = "fairly compact on the log scale"
+
+        scale_note = (
+            " Because log scaling compresses large values, upper-tail differences "
+            "look less extreme here than they do on the raw scale."
+        )
+    else:
+        mean_to_median = (mean / median) if median != 0 else np.nan
+        p90_to_median = (p90 / median) if median != 0 else np.nan
+
+        if pd.notna(mean_to_median) and pd.notna(p90_to_median):
+            if mean_to_median >= 1.5 or p90_to_median >= 3.0:
+                shape = "strongly right-skewed"
+            elif mean_to_median >= 1.2 or p90_to_median >= 2.0:
+                shape = "moderately right-skewed"
+            else:
+                shape = "fairly compact"
+        else:
+            shape = "hard to characterize"
+
+        scale_note = ""
+
+    # Ungrouped insight
+    if not grouped:
+        if view_type == "Histogram":
+            return (
+                f"💡 {metric_label} appears {shape} {scope_text}. "
+                f"The median plotted value is {median:,.2f}, while the middle-80% "
+                f"spread runs from {p10:,.2f} to {p90:,.2f}, which gives a quick read "
+                f"on how concentrated versus long-tailed the distribution is."
+                f"{scale_note}"
+            )
+
+        if view_type == "Density":
+            return (
+                f"💡 The density curve suggests that {metric_label} is {shape} "
+                f"{scope_text}. The center of the visible distribution sits around "
+                f"{median:,.2f}, while the middle-80% spread extends from "
+                f"{p10:,.2f} to {p90:,.2f}."
+                f"{scale_note}"
+            )
+
+        # CDF
+        return (
+            f"💡 The CDF indicates that {metric_label} is {shape} {scope_text}. "
+            f"Half of visible albums are at or below {median:,.2f}, and 90% are at "
+            f"or below {p90:,.2f}, which shows how quickly the distribution accumulates."
+            f"{scale_note}"
+        )
+
+    # Grouped insight
+    group_summary = (
+        plot_df.groupby("group")["value"]
+        .agg(["count", "median", "mean"])
+        .reset_index()
+    )
+
+    group_quantiles = (
+        plot_df.groupby("group")["value"]
+        .quantile([0.10, 0.90])
+        .unstack()
+        .reset_index()
+        .rename(columns={0.10: "p10", 0.90: "p90"})
+    )
+
+    group_summary = group_summary.merge(group_quantiles, on="group", how="left")
+    group_summary["spread"] = group_summary["p90"] - group_summary["p10"]
+
+    highest_median_row = group_summary.sort_values(
+        ["median", "count", "group"],
+        ascending=[False, False, True],
+    ).iloc[0]
+
+    widest_spread_row = group_summary.sort_values(
+        ["spread", "count", "group"],
+        ascending=[False, False, True],
+    ).iloc[0]
+
+    largest_group_row = group_summary.sort_values(
+        ["count", "median", "group"],
+        ascending=[False, False, True],
+    ).iloc[0]
+
+    highest_group = str(highest_median_row["group"])
+    widest_group = str(widest_spread_row["group"])
+    largest_group = str(largest_group_row["group"])
+
+    if view_type == "Histogram":
+        return (
+            f"💡 {scope_text.capitalize()}, {metric_label} appears {shape}. "
+            f"{highest_group} has the highest median plotted value "
+            f"({highest_median_row['median']:,.2f}), while {widest_group} shows the "
+            f"widest middle-80% spread ({widest_spread_row['spread']:,.2f}). "
+            f"The largest visible group is {largest_group} with "
+            f"{int(largest_group_row['count']):,} albums."
+            f"{scale_note}"
+        )
+
+    if view_type == "Density":
+        return (
+            f"💡 The density comparison suggests {metric_label} is {shape} "
+            f"{scope_text}. {highest_group} sits highest on the median "
+            f"({highest_median_row['median']:,.2f}), while {widest_group} spans the "
+            f"broadest middle range ({widest_spread_row['spread']:,.2f})."
+            f"{scale_note}"
+        )
+
+    # CDF
+    return (
+        f"💡 The grouped CDF view suggests {metric_label} is {shape} {scope_text}. "
+        f"{highest_group} has the highest median plotted value "
+        f"({highest_median_row['median']:,.2f}), while {largest_group} is the biggest "
+        f"visible group with {int(largest_group_row['count']):,} albums."
+        f"{scale_note}"
+    )
+
+
+def build_group_summary_table(plot_df: pd.DataFrame) -> pd.DataFrame | None:
+    """
+    Build a grouped summary table for the current distribution view.
+    """
+    if "group" not in plot_df.columns:
+        return None
+
+    summary = (
+        plot_df.groupby("group")["value"]
+        .agg(["count", "median", "mean"])
+        .reset_index()
+    )
+
+    summary["p10"] = plot_df.groupby("group")["value"].quantile(0.10).values
+    summary["p90"] = plot_df.groupby("group")["value"].quantile(0.90).values
+    summary["spread"] = summary["p90"] - summary["p10"]
+
+    return summary.sort_values(
+        ["median", "count", "group"],
+        ascending=[False, False, True],
+    )
+
 def main() -> None:
     """Render the Distribution Explorer page."""
     st.set_page_config(
@@ -622,11 +954,49 @@ def main() -> None:
 
     st.subheader(get_display_label(metric))
 
+    st.caption(
+        get_view_type_explainer(
+            view_type=view_type,
+            metric=metric,
+            use_log=use_log,
+            group_var=group_var,
+        )
+    )
+
+    st.markdown("**View Context**")
+    st.caption(
+        build_distribution_context_caption(
+            metric=metric,
+            use_log=use_log,
+            group_var=group_var,
+            selected_groups=selected_groups,
+            top_n=top_n,
+        )
+    )
+
+    render_distribution_insight_cards(
+        plot_df=plot_df,
+        metric=metric,
+        group_var=group_var,
+        use_log=use_log,
+    )
+
     col1, col2, col3, col4 = st.columns(4)
+    median_val = plot_df["value"].median()
+    mean_val = plot_df["value"].mean()
+    p90_val = plot_df["value"].quantile(0.9)
+
+    label_suffix = " (log10)" if use_log else ""
+
     col1.metric("Albums", f"{len(plot_df):,}")
-    col2.metric("Median", f"{plot_df['value'].median():.2f}")
-    col3.metric("Mean", f"{plot_df['value'].mean():.2f}")
-    col4.metric("P90", f"{plot_df['value'].quantile(0.9):.2f}")
+    col2.metric(f"Median{label_suffix}", f"{median_val:.2f}")
+    col3.metric(f"Mean{label_suffix}", f"{mean_val:.2f}")
+    col4.metric(f"P90{label_suffix}", f"{p90_val:.2f}")
+
+    if use_log:
+        st.caption(
+            "Values are shown on the log10 scale. Differences reflect orders of magnitude rather than raw units."
+        )
 
     if group_var != "None":
         if selected_groups:
@@ -686,6 +1056,28 @@ def main() -> None:
         )
 
     st.altair_chart(chart, width="stretch")
+
+    st.caption(
+        build_distribution_supporting_insight(
+            plot_df=plot_df,
+            metric=metric,
+            group_var=group_var,
+            use_log=use_log,
+            view_type=view_type,
+            selected_groups=selected_groups,
+            top_n=top_n,
+        )
+    )
+
+    if group_var != "None":
+        summary_df = build_group_summary_table(plot_df)
+        if summary_df is not None:
+            st.subheader("Group Summary")
+            st.dataframe(
+                rename_columns_for_display(summary_df),
+                width="stretch",
+                hide_index=True,
+            )
 
     if controls["show_table"]:
         st.subheader("Source Data")

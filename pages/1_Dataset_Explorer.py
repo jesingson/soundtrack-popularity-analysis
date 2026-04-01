@@ -181,6 +181,50 @@ def format_date_columns(display_df: pd.DataFrame) -> pd.DataFrame:
 
     return formatted_df
 
+def build_dataset_filter_context_caption(controls: dict) -> str:
+    """
+    Build a short caption describing the currently active Dataset Explorer filters.
+    """
+    parts = []
+
+    year_min, year_max = controls["year_range"]
+    parts.append(f"Film years {year_min}–{year_max}")
+
+    if controls["min_tracks"] > 1:
+        parts.append(f"Minimum tracks: {controls['min_tracks']}")
+
+    if controls["listeners_only"]:
+        parts.append("Only albums with Last.fm listener data")
+
+    if controls["selected_film_genres"]:
+        shown = ", ".join(controls["selected_film_genres"][:5])
+        if len(controls["selected_film_genres"]) > 5:
+            shown += ", ..."
+        parts.append(f"Film genres: {shown}")
+
+    if controls["selected_album_genres"]:
+        shown = ", ".join(controls["selected_album_genres"][:5])
+        if len(controls["selected_album_genres"]) > 5:
+            shown += ", ..."
+        parts.append(f"Album genres: {shown}")
+
+    if controls["selected_composers"]:
+        shown = ", ".join(controls["selected_composers"][:3])
+        if len(controls["selected_composers"]) > 3:
+            shown += ", ..."
+        parts.append(f"Composers: {shown}")
+
+    if controls["selected_labels"]:
+        shown = ", ".join(controls["selected_labels"][:3])
+        if len(controls["selected_labels"]) > 3:
+            shown += ", ..."
+        parts.append(f"Labels: {shown}")
+
+    if controls["search_text"] and controls["search_text"].strip():
+        parts.append(f"Search: “{controls['search_text'].strip()}”")
+
+    return " | ".join(parts) if parts else "Showing the full dataset."
+
 def main() -> None:
     """Render the Dataset Explorer page."""
     apply_app_styles()
@@ -219,6 +263,9 @@ def main() -> None:
     )
 
     filtered_df = filter_dataset(explorer_df, controls)
+
+    st.markdown("**Filter Context**")
+    st.caption(build_dataset_filter_context_caption(controls))
 
     sort_col = "lfm_album_listeners"
     if sort_col in filtered_df.columns:
@@ -286,6 +333,11 @@ def main() -> None:
     display_df = format_display_df(filtered_df, selected_columns)
 
     st.markdown(f"### Filtered Albums ({len(display_df):,} rows)")
+
+    st.caption(
+        "Each row represents one soundtrack album after the current filters. "
+        "Use the column selector to tailor the table, or download the filtered dataset as CSV."
+    )
 
     if controls["show_data_table"]:
         st.dataframe(

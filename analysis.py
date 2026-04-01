@@ -23,6 +23,11 @@ logic so the functions remain easier to test, reuse, and extend.
 import pandas as pd
 import altair as alt
 
+EXCLUDED_CORRELATION_COLS = {
+    "tmdb_id",
+    "release_group_mbid",
+}
+
 def compute_correlation_matrix(
         album_analytics_df: pd.DataFrame,
         method: str = "spearman"
@@ -153,17 +158,24 @@ def prepare_lollipop_data(
         correlation values, absolute correlation values, and a zero
         baseline column for lollipop chart rendering.
     """
-    corr_df = album_analytics_df.select_dtypes(include=["number", "bool"])
+    corr_df = album_analytics_df.select_dtypes(include=["number", "bool"]).copy()
+
+    # Exclude obvious ID / key fields from correlation ranking.
+    keep_cols = [
+        col for col in corr_df.columns
+        if col not in EXCLUDED_CORRELATION_COLS
+    ]
+    corr_df = corr_df[keep_cols]
+
     target = target_col
 
     corr_sorted = (
         corr_df
-        .corr(method = method)[target]  # correlation with target
-        .drop(target)  # remove self-correlation
+        .corr(method=method)[target]
+        .drop(target)
         .sort_values(key=lambda s: s.abs(), ascending=False)
     )
 
-    # Convert series to a dataframe
     corr_df_plot = (
         corr_sorted
         .rename("corr")
@@ -193,8 +205,8 @@ def plot_lollipop_chart(
         alt.Chart: Altair lollipop chart.
     """
     x_domain = [
-        float(corr_df_plot["corr"].min()) - 0.02,
-        float(corr_df_plot["corr"].max()) + 0.02
+        min(0.0, float(corr_df_plot["corr"].min()) - 0.02),
+        max(0.0, float(corr_df_plot["corr"].max()) + 0.02),
     ]
 
     x_axis = alt.X(
@@ -209,12 +221,13 @@ def plot_lollipop_chart(
         title=None
     )
 
-    # Draw a lollipop chart of correlations
     sticks = alt.Chart(corr_df_plot).mark_rule(strokeWidth=2).encode(
         y=y_axis,
-        x=alt.X("zero:Q",
-                scale=alt.Scale(domain=x_domain),
-                title="Correlation with log(album listeners)"),
+        x=alt.X(
+            "zero:Q",
+            scale=alt.Scale(domain=x_domain),
+            title="Correlation with log(album listeners)"
+        ),
         x2="corr:Q",
         color=alt.condition(
             "datum.corr >= 0",

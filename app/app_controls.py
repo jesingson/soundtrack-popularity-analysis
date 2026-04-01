@@ -874,40 +874,71 @@ def get_cross_entity_controls(
 # PAGE 8 Controls
 def get_correlation_controls() -> dict:
     """
-    Render sidebar controls for the correlation explorer.
+    Render sidebar controls for the Correlation Explorer.
 
     Returns:
-        dict: Selected control values.
+        dict: Control values for the page.
     """
-    st.sidebar.header("Correlation Controls")
+    st.sidebar.header("Correlation Explorer Controls")
 
-    method = st.sidebar.selectbox(
+    method = st.sidebar.radio(
         "Correlation method",
         options=["pearson", "spearman"],
         index=0,
+        help=(
+            "Pearson emphasizes linear relationships. "
+            "Spearman emphasizes monotonic rank-order relationships."
+        ),
     )
 
     top_n = st.sidebar.slider(
-        "Top N features for lollipop chart",
+        "Top features in lollipop chart",
         min_value=5,
-        max_value=25,
-        value=15,
+        max_value=30,
+        value=12,
         step=1,
     )
 
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Heatmap Controls")
+
+    heatmap_scope = st.sidebar.radio(
+        "Heatmap feature scope",
+        options=["Full matrix", "Top lollipop features only"],
+        index=0,
+        help=(
+            "Use the full feature matrix, or limit the heatmap to the same top-ranked "
+            "features shown in the lollipop chart."
+        ),
+    )
+
+    heatmap_top_n = st.sidebar.slider(
+        "Features in reduced heatmap",
+        min_value=5,
+        max_value=25,
+        value=12,
+        step=1,
+        disabled=(heatmap_scope != "Top lollipop features only"),
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Tables")
+
     show_lollipop_table = st.sidebar.checkbox(
-        "Show lollipop data table",
+        "Show lollipop source table",
         value=False,
     )
 
     show_heatmap_table = st.sidebar.checkbox(
-        "Show heatmap source table",
+        "Show heatmap source tables",
         value=False,
     )
 
     return {
         "method": method,
         "top_n": top_n,
+        "heatmap_scope": heatmap_scope,
+        "heatmap_top_n": heatmap_top_n,
         "show_lollipop_table": show_lollipop_table,
         "show_heatmap_table": show_heatmap_table,
     }

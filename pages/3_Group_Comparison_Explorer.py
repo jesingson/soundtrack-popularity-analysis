@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+
 import altair as alt
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.graph_objects as go
+import streamlit as st
 
 from app.app_controls import (
     get_global_filter_controls,
@@ -111,6 +112,7 @@ PREFERRED_GROUP_COLS = [
     "critics_score_nominee",
     "critics_song_nominee",
 ]
+
 
 def derive_multi_label_group(
     df: pd.DataFrame,
@@ -226,6 +228,7 @@ def build_group_value_options_map(
 
     return value_map
 
+
 def explode_multivalue_group_rows(
     df: pd.DataFrame,
     raw_col: str,
@@ -265,6 +268,7 @@ def explode_multivalue_group_rows(
         return pd.DataFrame(columns=list(df.columns) + ["group"])
 
     return pd.DataFrame(exploded_rows)
+
 
 def prepare_group_comparison_data(
     df: pd.DataFrame,
@@ -341,7 +345,27 @@ def build_group_summary_df(
 ) -> pd.DataFrame:
     """
     Aggregate row-level group data into one summary row per group.
+
+    Includes central tendency and spread metrics used by insight cards,
+    supporting narrative, and summary tables.
     """
+    if plot_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "group",
+                "count",
+                "median",
+                "mean",
+                "total",
+                "p10",
+                "q1",
+                "q3",
+                "p90",
+                "iqr",
+                "spread_80",
+            ]
+        )
+
     summary_df = (
         plot_df.groupby("group", as_index=False)
         .agg(
@@ -349,10 +373,433 @@ def build_group_summary_df(
             median=("value", "median"),
             mean=("value", "mean"),
             total=("value", "sum"),
+            p10=("value", lambda s: float(s.quantile(0.10))),
+            q1=("value", lambda s: float(s.quantile(0.25))),
+            q3=("value", lambda s: float(s.quantile(0.75))),
+            p90=("value", lambda s: float(s.quantile(0.90))),
         )
     )
 
+    summary_df["iqr"] = summary_df["q3"] - summary_df["q1"]
+    summary_df["spread_80"] = summary_df["p90"] - summary_df["p10"]
+
     return summary_df
+
+
+def get_view_metric_column(ranking_stat: str) -> str:
+    """
+    Map ranking stat labels to the backing summary dataframe column.
+    """
+    stat_map = {
+        "Median": "median",
+        "Mean": "mean",
+        "Total": "total",
+        "Count": "count",
+    }
+    return stat_map.get(ranking_stat, "median")
+
+
+def format_display_number(value: float, is_count: bool = False) -> str:
+    """
+    Format a number for metric cards and captions.
+    """
+    if pd.isna(value):
+        return "NA"
+    if is_count:
+        return f"{int(round(value)):,}"
+    return f"{value:,.2f}"
+
+
+def get_group_comparison_view_explainer(
+    view_mode: str,
+    metric: str,
+    group_var: str,
+    use_log: bool,
+    ranking_stat: str | None,
+    stratify_by: str,
+) -> str:
+    """
+    Explain what the current Group Comparison view is showing.
+    """
+    metric_label = get_display_label(metric)
+    group_label = get_display_label(group_var)
+    scale_text = " on the log10 scale" if use_log else ""
+
+    if view_mode == "Boxplot":
+        return (
+            f"Boxplot = side-by-side comparison of the distribution of {metric_label}"
+            f"{scale_text} across {group_label}. Boxes show the middle 50% of albums, "
+            "the center tick marks the median, whiskers follow the 1.5 × IQR rule, "
+            "and points beyond the whiskers are outliers."
+        )
+
+    if view_mode == "Violin":
+        return (
+            f"Violin = side-by-side comparison of the distribution shape of "
+            f"{metric_label}{scale_text} across {group_label}. Wider sections "
+            "indicate where more albums are concentrated."
+        )
+
+    if stratify_by == "None":
+        metric_phrase = (
+            "album count"
+            if ranking_stat == "Count"
+            else f"{ranking_stat.lower()} {metric_label}"
+        )
+        return (
+            f"Bar ranking = groups ordered by {metric_phrase}, making it easy to see "
+            "which groups lead and how large the gaps are."
+        )
+
+    metric_phrase = (
+        "album count"
+        if ranking_stat == "Count"
+        else f"{ranking_stat.lower()} {metric_label}"
+    )
+    return (
+        f"Stratified bar ranking = groups ordered by {metric_phrase}, with each bar "
+        f"split by {get_display_label(stratify_by)} to show composition differences."
+    )
+
+
+def build_group_comparison_context_caption(
+    metric: str,
+    group_var: str,
+    view_mode: str,
+    use_log: bool,
+    selected_groups: list[str],
+    top_n: int | None,
+    min_group_size: int,
+    ranking_stat: str | None,
+    stratify_by: str,
+    genre_mode: str,
+) -> str:
+    """
+    Build a natural-language caption describing the current analytical scope.
+    """
+    metric_label = get_display_label(metric)
+    group_label = get_display_label(group_var)
+
+    if selected_groups:
+        if len(selected_groups) <= 5:
+            group_scope = f"the selected {group_label.lower()} values ({', '.join(selected_groups)})"
+        else:
+            shown = ", ".join(selected_groups[:5])
+            group_scope = f"the selected {group_label.lower()} values ({shown}, ...)"
+    else:
+        group_scope = f"the top {top_n} {group_label.lower()} groups by album count"
+
+    base = f"Comparing {metric_label}"
+
+    if use_log and view_mode in {"Boxplot", "Violin"}:
+        base += " on the log10 scale"
+
+    base += f" across {group_scope}, excluding groups with fewer than {min_group_size} albums."
+
+    if view_mode == "Bar Ranking" and ranking_stat is not None:
+        metric_phrase = (
+            "album count"
+            if ranking_stat == "Count"
+            else f"{ranking_stat.lower()} {metric_label}"
+        )
+        base += f" Groups are ordered by {metric_phrase}."
+        if stratify_by != "None":
+            base += f" Bars are stacked by {get_display_label(stratify_by)}."
+
+    return base
+
+
+def build_group_comparison_insight_summary(
+    summary_df: pd.DataFrame,
+    view_mode: str,
+    ranking_stat: str,
+) -> dict[str, str]:
+    """
+    Build top-line insight cards for the current grouped comparison.
+    """
+    if summary_df.empty:
+        return {
+            "card1_title": "Top Group",
+            "card1_value": "None",
+            "card1_caption": "No groups remain in view.",
+            "card2_title": "Gap vs #2",
+            "card2_value": "None",
+            "card2_caption": "No comparison available.",
+            "card3_title": "Groups in View",
+            "card3_value": "0",
+            "card3_caption": "No visible groups remain.",
+        }
+
+    if view_mode in {"Boxplot", "Violin"}:
+        top_median_row = summary_df.sort_values(
+            ["median", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        most_consistent_row = summary_df.sort_values(
+            ["iqr", "count", "group"],
+            ascending=[True, False, True],
+        ).iloc[0]
+
+        most_variable_row = summary_df.sort_values(
+            ["iqr", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        return {
+            "card1_title": "Top Median Group",
+            "card1_value": str(top_median_row["group"]),
+            "card1_caption": f"Median = {top_median_row['median']:,.2f}",
+            "card2_title": "Most Consistent",
+            "card2_value": str(most_consistent_row["group"]),
+            "card2_caption": f"Lowest IQR = {most_consistent_row['iqr']:,.2f}",
+            "card3_title": "Most Variable",
+            "card3_value": str(most_variable_row["group"]),
+            "card3_caption": f"Highest IQR = {most_variable_row['iqr']:,.2f}",
+        }
+
+    stat_col = get_view_metric_column(ranking_stat)
+    ranked_df = summary_df.sort_values(
+        [stat_col, "count", "group"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top_row = ranked_df.iloc[0]
+    if len(ranked_df) >= 2:
+        gap_value = float(top_row[stat_col] - ranked_df.iloc[1][stat_col])
+    else:
+        gap_value = np.nan
+
+    gap_caption = (
+        f"Lead over #2 on {ranking_stat.lower()}."
+        if pd.notna(gap_value)
+        else "Only one visible group remains."
+    )
+
+    return {
+        "card1_title": "Top Group",
+        "card1_value": str(top_row["group"]),
+        "card1_caption": (
+            f"{ranking_stat} = "
+            f"{format_display_number(top_row[stat_col], is_count=(ranking_stat == 'Count'))}"
+        ),
+        "card2_title": "Gap vs #2",
+        "card2_value": (
+            format_display_number(gap_value, is_count=(ranking_stat == 'Count'))
+            if pd.notna(gap_value) else "NA"
+        ),
+        "card2_caption": gap_caption,
+        "card3_title": "Groups in View",
+        "card3_value": f"{len(ranked_df):,}",
+        "card3_caption": "Groups currently shown in the chart.",
+    }
+
+
+def render_group_comparison_insight_cards(
+    summary_df: pd.DataFrame,
+    view_mode: str,
+    ranking_stat: str,
+) -> None:
+    """
+    Render three insight cards summarizing the current comparison.
+    """
+    insights = build_group_comparison_insight_summary(
+        summary_df=summary_df,
+        view_mode=view_mode,
+        ranking_stat=ranking_stat,
+    )
+
+    st.markdown("### 🧠 Key Insights")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(insights["card1_title"], insights["card1_value"])
+        st.caption(insights["card1_caption"])
+
+    with col2:
+        st.metric(insights["card2_title"], insights["card2_value"])
+        st.caption(insights["card2_caption"])
+
+    with col3:
+        st.metric(insights["card3_title"], insights["card3_value"])
+        st.caption(insights["card3_caption"])
+
+def build_genre_mode_note(
+    view_mode: str,
+    group_var: str,
+    genre_mode: str,
+) -> str:
+    """
+    Return a focused note explaining how genre groups are being handled.
+    """
+    if (
+        view_mode not in {"Boxplot", "Violin"}
+        or group_var not in {"album_genre_group", "film_genre_group"}
+    ):
+        return ""
+
+    if genre_mode == "Include albums in all matching genres":
+        return (
+            "Albums may appear in multiple genre distributions in this view, so genre "
+            "groups are not mutually exclusive and totals should not be interpreted as "
+            "distinct album counts."
+        )
+
+    return (
+        "Each album contributes to a single collapsed genre label in this view, so the "
+        "display shows one genre group per album."
+    )
+
+def build_group_comparison_supporting_insight(
+    summary_df: pd.DataFrame,
+    metric: str,
+    group_var: str,
+    view_mode: str,
+    ranking_stat: str | None,
+    use_log: bool,
+    selected_groups: list[str],
+    top_n: int | None,
+    stratify_by: str,
+    show_points: bool,
+) -> str:
+    """
+    Build a short interpretation caption for the current Group Comparison view.
+    """
+    if summary_df.empty:
+        return "No visible pattern remains to summarize."
+
+    metric_label = get_display_label(metric)
+    group_label = get_display_label(group_var)
+
+    if selected_groups:
+        scope_text = "among the selected groups"
+    elif top_n is not None:
+        scope_text = f"among the top {top_n} visible groups"
+    else:
+        scope_text = "across the visible groups"
+
+    scale_note = (
+        " Because the chart uses log10 scaling, upper-tail differences are visually compressed."
+        if use_log and view_mode in {"Boxplot", "Violin"}
+        else ""
+    )
+
+    points_note = (
+        " Individual album points are overlaid for row-level context."
+        if show_points and view_mode in {"Boxplot", "Violin"}
+        else ""
+    )
+
+    if view_mode == "Boxplot":
+        top_median_row = summary_df.sort_values(
+            ["median", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        widest_row = summary_df.sort_values(
+            ["iqr", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        tightest_row = summary_df.sort_values(
+            ["iqr", "count", "group"],
+            ascending=[True, False, True],
+        ).iloc[0]
+
+        return (
+            f"💡 {scope_text.capitalize()}, {top_median_row['group']} has the highest median "
+            f"{metric_label.lower()} ({top_median_row['median']:,.2f}). "
+            f"{widest_row['group']} shows the greatest within-group variability "
+            f"(IQR {widest_row['iqr']:,.2f}), while {tightest_row['group']} is the most consistent "
+            f"(IQR {tightest_row['iqr']:,.2f}).{scale_note}{points_note}"
+        )
+
+    if view_mode == "Violin":
+        top_median_row = summary_df.sort_values(
+            ["median", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        widest_row = summary_df.sort_values(
+            ["spread_80", "count", "group"],
+            ascending=[False, False, True],
+        ).iloc[0]
+
+        return (
+            f"💡 The violin shapes suggest that {top_median_row['group']} sits highest on "
+            f"{metric_label.lower()} {scope_text} (median {top_median_row['median']:,.2f}), "
+            f"while {widest_row['group']} spans the broadest middle-80% range "
+            f"({widest_row['spread_80']:,.2f}), indicating the widest overall spread."
+            f"{scale_note}{points_note}"
+        )
+
+    stat_col = get_view_metric_column(ranking_stat or "Median")
+    ranked_df = summary_df.sort_values(
+        [stat_col, "count", "group"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+    top_row = ranked_df.iloc[0]
+
+    if len(ranked_df) >= 2:
+        second_row = ranked_df.iloc[1]
+        gap_value = float(top_row[stat_col] - second_row[stat_col])
+        gap_text = (
+            f"The lead over {second_row['group']} is "
+            f"{format_display_number(gap_value, is_count=(ranking_stat == 'Count'))}."
+        )
+    else:
+        gap_text = "Only one visible group remains after the current filters."
+
+    if stratify_by == "None":
+        metric_phrase = (
+            "album count"
+            if ranking_stat == "Count"
+            else f"{ranking_stat.lower()} {metric_label}"
+        )
+        return (
+            f"💡 {scope_text.capitalize()}, {top_row['group']} leads on {metric_phrase}. "
+            f"{gap_text}"
+        )
+
+    return (
+        f"💡 {scope_text.capitalize()}, {top_row['group']} leads in the stacked ranking. "
+        f"{gap_text} The segment breakdown shows how composition varies by "
+        f"{get_display_label(stratify_by).lower()}, so differences are not just about total height "
+        "but also about which subgroups are driving each bar."
+    )
+
+
+def build_group_summary_table(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a polished group summary table for display.
+    """
+    if summary_df.empty:
+        return summary_df
+
+    display_df = summary_df.copy().rename(
+        columns={
+            "group": "group",
+            "count": "albums",
+            "median": "median",
+            "mean": "mean",
+            "total": "total",
+            "p10": "p10",
+            "q1": "q1",
+            "q3": "q3",
+            "p90": "p90",
+            "iqr": "iqr",
+            "spread_80": "spread_80",
+        }
+    )
+
+    display_df = display_df.sort_values(
+        ["median", "albums", "group"],
+        ascending=[False, False, True],
+    )
+
+    return rename_columns_for_display(display_df)
+
 
 def prepare_stratified_ranking_data(
     plot_df: pd.DataFrame,
@@ -391,7 +838,6 @@ def prepare_stratified_ranking_data(
     else:
         rank_df["stratum"] = rank_df[stratify_by].astype(str)
 
-    # Keep only the largest strata, roll the rest into Others
     if stratify_by != "None":
         top_strata = (
             rank_df["stratum"]
@@ -417,6 +863,7 @@ def prepare_stratified_ranking_data(
         agg_df = grouped[metric].median().rename(columns={metric: "value"})
 
     return agg_df
+
 
 def create_stacked_bar_chart(
     agg_df: pd.DataFrame,
@@ -567,10 +1014,10 @@ def create_boxplot_chart(
     else:
         outlier_df = pd.DataFrame(columns=plot_df.columns.tolist())
 
-    # Whisker stems: Q1 down to lower whisker, and Q3 up to upper whisker
+    # Whisker stems
     lower_stems = (
         alt.Chart(summary_df)
-        .mark_rule(tooltip=False)
+        .mark_rule(color="white", strokeWidth=2, tooltip=False)
         .encode(
             x=alt.X(
                 "group:N",
@@ -585,7 +1032,7 @@ def create_boxplot_chart(
 
     upper_stems = (
         alt.Chart(summary_df)
-        .mark_rule(tooltip=False)
+        .mark_rule(color="white", strokeWidth=2, tooltip=False)
         .encode(
             x=alt.X("group:N", sort=group_order),
             y=alt.Y("q3_value:Q", title=y_title),
@@ -596,7 +1043,7 @@ def create_boxplot_chart(
     # Whisker caps
     lower_caps = (
         alt.Chart(summary_df)
-        .mark_tick(size=28, thickness=2, tooltip=False)
+        .mark_tick(color="white", size=28, thickness=2, tooltip=False)
         .encode(
             x=alt.X("group:N", sort=group_order),
             y=alt.Y("lower_whisker:Q"),
@@ -605,7 +1052,7 @@ def create_boxplot_chart(
 
     upper_caps = (
         alt.Chart(summary_df)
-        .mark_tick(size=28, thickness=2, tooltip=False)
+        .mark_tick(color="white", size=28, thickness=2, tooltip=False)
         .encode(
             x=alt.X("group:N", sort=group_order),
             y=alt.Y("upper_whisker:Q"),
@@ -712,14 +1159,14 @@ def create_boxplot_chart(
         ).mark_circle()
 
     chart = (
-            lower_stems
-            + upper_stems
-            + lower_caps
-            + upper_caps
-            + boxes
-            + medians
-            + outliers
-            + summary_tooltips
+        boxes
+        + lower_stems
+        + upper_stems
+        + lower_caps
+        + upper_caps
+        + medians
+        + outliers
+        + summary_tooltips
     )
 
     if show_points:
@@ -740,6 +1187,7 @@ def create_boxplot_chart(
             ],
         },
     )
+
 
 def create_strip_overlay(
     plot_df: pd.DataFrame,
@@ -782,6 +1230,7 @@ def create_strip_overlay(
         )
     )
 
+
 def create_bar_ranking_chart(
     summary_df: pd.DataFrame,
     metric: str,
@@ -791,13 +1240,7 @@ def create_bar_ranking_chart(
     """
     Create a horizontal bar chart ranking groups by the selected statistic.
     """
-    stat_map = {
-        "Median": "median",
-        "Mean": "mean",
-        "Total": "total",
-        "Count": "count",
-    }
-    stat_col = stat_map[ranking_stat]
+    stat_col = get_view_metric_column(ranking_stat)
 
     sort_df = summary_df.sort_values(stat_col, ascending=False)
     group_order = sort_df["group"].tolist()
@@ -823,6 +1266,9 @@ def create_bar_ranking_chart(
                 alt.Tooltip("median:Q", title="Median", format=",.3f"),
                 alt.Tooltip("mean:Q", title="Mean", format=",.3f"),
                 alt.Tooltip("total:Q", title="Total", format=",.3f"),
+                alt.Tooltip("p10:Q", title="P10", format=",.3f"),
+                alt.Tooltip("p90:Q", title="P90", format=",.3f"),
+                alt.Tooltip("iqr:Q", title="IQR", format=",.3f"),
             ],
         )
         .properties(
@@ -848,9 +1294,11 @@ def build_boxplot_source_table(
     metric: str,
 ) -> pd.DataFrame:
     """
-    Build row-level source table for boxplot mode.
+    Build row-level source table for boxplot/violin mode.
     """
-    table_df = plot_df[[metric, "group", "value"]].copy()
+    table_cols = [metric, "group", "value"]
+    present_cols = [col for col in table_cols if col in plot_df.columns]
+    table_df = plot_df[present_cols].copy()
     table_df = table_df.rename(columns={"value": "plot_value"})
     return rename_columns_for_display(table_df)
 
@@ -874,22 +1322,22 @@ def build_group_drilldown_table(
     """
     Build a row-level drill-down table for one selected group.
 
-    Uses the richer comparison dataframe rather than the narrow plot dataframe,
-    so users can see actual album metadata.
+    Uses the current plot dataframe so the drilldown matches the exact visible
+    chart scope, including exploded genre membership where applicable.
     """
     detail_df = df.copy()
 
-    if group_var == "album_us_release_year":
-        detail_df["group"] = (
-            pd.to_numeric(detail_df[group_var], errors="coerce")
-            .astype("Int64")
-            .astype(str)
-        )
-    else:
-        detail_df["group"] = detail_df[group_var].astype(str)
+    if "group" not in detail_df.columns:
+        if group_var == "album_us_release_year":
+            detail_df["group"] = (
+                pd.to_numeric(detail_df[group_var], errors="coerce")
+                .astype("Int64")
+                .astype(str)
+            )
+        else:
+            detail_df["group"] = detail_df[group_var].astype(str)
 
     detail_df = detail_df[detail_df["group"] == inspect_group].copy()
-
     detail_df = detail_df.dropna(subset=[metric])
 
     if use_log:
@@ -930,6 +1378,7 @@ def build_group_drilldown_table(
         )
 
     return rename_columns_for_display(detail_df)
+
 
 def create_violin_chart(
     plot_df: pd.DataFrame,
@@ -984,10 +1433,10 @@ def create_violin_chart(
 
         cd_index = 0
         if "album_title" in group_df.columns:
-            hover_parts.append("Album: %{customdata[" + str(cd_index) + "]}")
+            hover_parts.append(f"Album: %{{customdata[{cd_index}]}}")
             cd_index += 1
         if "film_title" in group_df.columns:
-            hover_parts.append("Film: %{customdata[" + str(cd_index) + "]}")
+            hover_parts.append(f"Film: %{{customdata[{cd_index}]}}")
             cd_index += 1
         if metric in group_df.columns:
             metric_format = (
@@ -1038,6 +1487,7 @@ def create_violin_chart(
 
     return fig
 
+
 def main() -> None:
     """Render the Group Comparison Explorer page."""
     st.set_page_config(
@@ -1056,7 +1506,7 @@ def main() -> None:
     )
 
     explorer_df = load_explorer_data()
-    # Build options
+
     year_series = explorer_df["film_year"].dropna().astype(int)
     min_year = int(year_series.min())
     max_year = int(year_series.max())
@@ -1064,7 +1514,6 @@ def main() -> None:
     film_genre_options = split_multivalue_genres(explorer_df["film_genres"])
     album_genre_options = split_multivalue_genres(explorer_df["album_genres_display"])
 
-    # Controls
     global_filters = get_global_filter_controls(
         min_year=min_year,
         max_year=max_year,
@@ -1072,10 +1521,7 @@ def main() -> None:
         album_genre_options=album_genre_options,
     )
 
-    # Apply filters
     filtered_df = filter_dataset(explorer_df, global_filters)
-
-    # Then proceed
     comparison_df = build_group_comparison_df(filtered_df)
 
     numeric_options = [
@@ -1131,10 +1577,11 @@ def main() -> None:
 
     groups_shown = summary_df["group"].nunique()
     albums_after_global_filters = len(filtered_df)
+
     if (
-            view_mode in ["Boxplot", "Violin"]
-            and controls["genre_mode"] == "Include albums in all matching genres"
-            and group_var in ["album_genre_group", "film_genre_group"]
+        view_mode in ["Boxplot", "Violin"]
+        and controls["genre_mode"] == "Include albums in all matching genres"
+        and group_var in ["album_genre_group", "film_genre_group"]
     ):
         if "album_title" in plot_df.columns:
             albums_in_view = plot_df["album_title"].nunique()
@@ -1144,7 +1591,50 @@ def main() -> None:
     else:
         albums_in_view = len(plot_df)
         membership_rows = None
+
     median_group_size = summary_df["count"].median()
+
+    st.caption(
+        get_group_comparison_view_explainer(
+            view_mode=view_mode,
+            metric=metric,
+            group_var=group_var,
+            use_log=use_log,
+            ranking_stat=ranking_stat,
+            stratify_by=controls.get("stratify_by", "None"),
+        )
+    )
+
+    st.markdown("**View Context**")
+    st.caption(
+        build_group_comparison_context_caption(
+            metric=metric,
+            group_var=group_var,
+            view_mode=view_mode,
+            use_log=use_log,
+            selected_groups=selected_groups,
+            top_n=top_n,
+            min_group_size=min_group_size,
+            ranking_stat=ranking_stat,
+            stratify_by=controls.get("stratify_by", "None"),
+            genre_mode=controls["genre_mode"],
+        )
+    )
+
+    genre_mode_note = build_genre_mode_note(
+        view_mode=view_mode,
+        group_var=group_var,
+        genre_mode=controls["genre_mode"],
+    )
+
+    if genre_mode_note:
+        st.caption(genre_mode_note)
+
+    render_group_comparison_insight_cards(
+        summary_df=summary_df,
+        view_mode=view_mode,
+        ranking_stat=ranking_stat,
+    )
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -1183,10 +1673,16 @@ def main() -> None:
         )
 
     with col5:
-        if view_mode == "Boxplot":
-            st.metric("Metric", get_display_label(metric))
+        label_suffix = " (log10)" if use_log else ""
+        if view_mode in {"Boxplot", "Violin"}:
+            st.metric("Metric", f"{get_display_label(metric)}{label_suffix}")
         else:
             st.metric("Ranking", ranking_stat)
+
+    if use_log:
+        st.caption(
+            "Displayed values use log10 scaling, so differences reflect compressed orders of magnitude rather than raw units."
+        )
 
     if selected_groups:
         st.caption(
@@ -1261,9 +1757,32 @@ def main() -> None:
 
         st.altair_chart(chart, width="stretch")
 
+    st.caption(
+        build_group_comparison_supporting_insight(
+            summary_df=summary_df,
+            metric=metric,
+            group_var=group_var,
+            view_mode=view_mode,
+            ranking_stat=ranking_stat,
+            use_log=use_log,
+            selected_groups=selected_groups,
+            top_n=top_n,
+            stratify_by=controls.get("stratify_by", "None"),
+            show_points=controls["show_points"],
+        )
+    )
+
+    st.subheader("Group Summary")
+    group_summary_table = build_group_summary_table(summary_df)
+    st.dataframe(
+        group_summary_table,
+        width="stretch",
+        hide_index=True,
+    )
+
     if controls["show_table"]:
         st.subheader("Source Data")
-        if view_mode == "Boxplot":
+        if view_mode in {"Boxplot", "Violin"}:
             table_df = build_boxplot_source_table(
                 plot_df=plot_df,
                 metric=metric,
