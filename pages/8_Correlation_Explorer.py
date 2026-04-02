@@ -96,9 +96,9 @@ def get_correlation_view_explainer(method: str) -> str:
         "generally less sensitive to outliers and non-normal scaling."
     )
 
-
 def build_correlation_context_caption(
     method: str,
+    ranking_mode: str,
     top_n: int,
     rows_loaded: int,
     heatmap_scope: str,
@@ -107,15 +107,24 @@ def build_correlation_context_caption(
     """
     Build a natural-language scope caption for the correlation view.
     """
+    if ranking_mode == "Positive only":
+        ranking_text = "top positive target relationships"
+    elif ranking_mode == "Negative only":
+        ranking_text = "top negative target relationships"
+    else:
+        ranking_text = "top absolute target relationships"
+
     if heatmap_scope == "Top lollipop features only":
-        heatmap_text = f"Heatmap is limited to the top {heatmap_top_n:,} lollipop features."
+        heatmap_text = (
+            f"Heatmap is limited to the top {heatmap_top_n:,} visible lollipop features."
+        )
     else:
         heatmap_text = "Heatmap uses the full feature matrix."
 
     return (
         f"Using {method.title()} correlation across {rows_loaded:,} album rows, "
-        f"with the lollipop chart showing the top {top_n:,} target relationships. "
-        f"{heatmap_text}"
+        f"with the lollipop chart showing the top {top_n:,} {ranking_text} "
+        f"against {get_display_label('log_lfm_album_listeners')}. {heatmap_text}"
     )
 
 
@@ -152,12 +161,54 @@ def _get_lollipop_corr_col(corr_df_plot: pd.DataFrame) -> str:
 
     return numeric_cols[0]
 
+def apply_lollipop_ranking_mode(
+    corr_df_plot: pd.DataFrame,
+    ranking_mode: str,
+) -> pd.DataFrame:
+    """
+    Apply the selected lollipop ranking mode to the prepared correlation dataframe.
+
+    Args:
+        corr_df_plot: Prepared lollipop dataframe.
+        ranking_mode: One of Absolute, Positive only, Negative only.
+
+    Returns:
+        pd.DataFrame: Filtered and sorted lollipop dataframe.
+    """
+    if corr_df_plot.empty:
+        return corr_df_plot
+
+    feature_col = _get_lollipop_feature_col(corr_df_plot)
+    corr_col = _get_lollipop_corr_col(corr_df_plot)
+
+    working_df = corr_df_plot.copy()
+    working_df["abs_corr"] = working_df[corr_col].abs()
+
+    if ranking_mode == "Positive only":
+        working_df = working_df[working_df[corr_col] > 0].copy()
+        working_df = working_df.sort_values(
+            [corr_col, feature_col],
+            ascending=[False, True],
+        )
+    elif ranking_mode == "Negative only":
+        working_df = working_df[working_df[corr_col] < 0].copy()
+        working_df = working_df.sort_values(
+            [corr_col, feature_col],
+            ascending=[True, True],
+        )
+    else:
+        working_df = working_df.sort_values(
+            ["abs_corr", corr_col],
+            ascending=[False, False],
+        )
+
+    return working_df.reset_index(drop=True)
 
 def build_correlation_insight_summary(
     corr_df_plot: pd.DataFrame,
 ) -> list[tuple[str, str, str]] | None:
     """
-    Build top-line insight cards from the lollipop dataframe.
+    Build top-line insight cards from the visible lollipop dataframe.
     """
     if corr_df_plot.empty:
         return None
@@ -168,45 +219,36 @@ def build_correlation_insight_summary(
     working_df = corr_df_plot[[feature_col, corr_col]].copy()
     working_df["abs_corr"] = working_df[corr_col].abs()
 
-    top_abs_row = working_df.sort_values(
-        ["abs_corr", corr_col],
-        ascending=[False, False],
-    ).iloc[0]
+    top_visible = working_df.iloc[0]
+    max_abs = float(working_df["abs_corr"].max())
 
-    positive_df = working_df[working_df[corr_col] > 0]
-    negative_df = working_df[working_df[corr_col] < 0]
+    positive_count = int((working_df[corr_col] > 0).sum())
+    negative_count = int((working_df[corr_col] < 0).sum())
 
-    if not positive_df.empty:
-        top_positive = positive_df.sort_values(corr_col, ascending=False).iloc[0]
-        pos_value = str(top_positive[feature_col])
-        pos_caption = f"r = {top_positive[corr_col]:.3f}"
+    if max_abs >= 0.60:
+        strength_label = "Strong"
+    elif max_abs >= 0.35:
+        strength_label = "Moderate"
+    elif max_abs >= 0.15:
+        strength_label = "Weak–Moderate"
     else:
-        pos_value = "None"
-        pos_caption = "No positive features in view"
-
-    if not negative_df.empty:
-        top_negative = negative_df.sort_values(corr_col, ascending=True).iloc[0]
-        neg_value = str(top_negative[feature_col])
-        neg_caption = f"r = {top_negative[corr_col]:.3f}"
-    else:
-        neg_value = "None"
-        neg_caption = "No negative features in view"
+        strength_label = "Weak"
 
     return [
         (
-            "Top Positive Feature",
-            pos_value,
-            pos_caption,
+            "Top Visible Feature",
+            str(top_visible[feature_col]),
+            f"r = {top_visible[corr_col]:.3f}",
         ),
         (
-            "Top Negative Feature",
-            neg_value,
-            neg_caption,
+            "Visible Direction Mix",
+            f"{positive_count} + / {negative_count} −",
+            "Counts within the currently visible lollipop ranking.",
         ),
         (
-            "Largest Absolute Correlation",
-            str(top_abs_row[feature_col]),
-            f"|r| = {top_abs_row['abs_corr']:.3f}",
+            "Strongest Visible Signal",
+            strength_label,
+            f"Max |r| = {max_abs:.3f}",
         ),
     ]
 
@@ -219,6 +261,7 @@ def render_correlation_insight_cards(
     """
     insights = build_correlation_insight_summary(corr_df_plot)
     if not insights:
+        st.info("No lollipop features remain under the current settings.")
         return
 
     st.markdown("### 🧠 Key Insights")
@@ -229,10 +272,10 @@ def render_correlation_insight_cards(
             st.metric(title, value)
             st.caption(caption)
 
-
 def build_lollipop_supporting_insight(
     corr_df_plot: pd.DataFrame,
     method: str,
+    ranking_mode: str,
 ) -> str:
     """
     Build a data-reactive supporting insight for the lollipop chart.
@@ -245,10 +288,7 @@ def build_lollipop_supporting_insight(
 
     working_df = corr_df_plot[[feature_col, corr_col]].copy()
     working_df["abs_corr"] = working_df[corr_col].abs()
-    ranked = working_df.sort_values(
-        ["abs_corr", corr_col],
-        ascending=[False, False],
-    ).reset_index(drop=True)
+    ranked = working_df.reset_index(drop=True)
 
     top = ranked.iloc[0]
     max_abs = float(top["abs_corr"])
@@ -256,7 +296,7 @@ def build_lollipop_supporting_insight(
     if len(ranked) >= 2:
         second = ranked.iloc[1]
         gap = float(top["abs_corr"] - second["abs_corr"])
-        gap_text = f"The gap vs the next feature is {gap:.3f}."
+        gap_text = f"The gap vs the next visible feature is {gap:.3f}."
     else:
         gap_text = "Only one feature is visible in the current ranking."
 
@@ -275,8 +315,15 @@ def build_lollipop_supporting_insight(
         else "near-zero"
     )
 
+    if ranking_mode == "Positive only":
+        mode_text = "Within the visible positive-only ranking"
+    elif ranking_mode == "Negative only":
+        mode_text = "Within the visible negative-only ranking"
+    else:
+        mode_text = "Within the visible absolute ranking"
+
     return (
-        f"💡 The strongest visible {method.title()} relationship is "
+        f"💡 {mode_text}, the strongest {method.title()} relationship is "
         f"{top[feature_col]} with a {strength} {direction} association "
         f"(r = {top[corr_col]:.3f}). {gap_text}"
     )
@@ -374,21 +421,37 @@ def build_heatmap_feature_subset(
 def render_lollipop_section(
     corr_df_plot: pd.DataFrame,
     method: str,
+    ranking_mode: str,
     show_table: bool,
 ) -> None:
     """
-    Render the lollipop chart section using precomputed data.
+    Render the lollipop chart section using the precomputed page dataframe.
+
+    Args:
+        corr_df_plot: Pre-filtered lollipop dataframe already limited to the
+            visible Top-N features for the current page state.
+        method: Correlation method.
+        ranking_mode: Current lollipop ranking mode.
+        show_table: Whether to show the underlying dataframe.
     """
     st.subheader("Feature Correlations with Album Popularity")
+
+    if corr_df_plot.empty:
+        st.info("No lollipop features remain under the current settings.")
+        return
+
+    if ranking_mode == "Positive only":
+        st.caption("Showing only the strongest positive relationships with the target.")
+    elif ranking_mode == "Negative only":
+        st.caption("Showing only the strongest negative relationships with the target.")
+    else:
+        st.caption("Showing the strongest relationships by absolute correlation magnitude.")
 
     display_df = apply_display_labels_to_lollipop_df(corr_df_plot)
 
     chart = an.plot_lollipop_chart(display_df)
     st.altair_chart(chart, width="stretch")
-
-    render_correlation_insight_cards(
-        apply_display_labels_to_lollipop_df(corr_df_plot)
-    )
+    st.caption(build_lollipop_supporting_insight(display_df, method, ranking_mode))
 
     if show_table:
         st.dataframe(
@@ -411,6 +474,10 @@ def render_heatmap_section(
         show_table: Whether to show the underlying matrix and long table.
     """
     st.subheader("Correlation Heatmap")
+
+    if corr_matrix.empty or corr_matrix.shape[0] < 2:
+        st.info("Not enough features remain to render the heatmap.")
+        return
 
     display_corr_matrix = apply_display_labels_to_corr_matrix(corr_matrix)
 
@@ -437,7 +504,7 @@ def render_heatmap_section(
     )
 
     st.altair_chart(heatmap, width="stretch")
-    st.caption(build_heatmap_supporting_insight(corr_matrix, method))
+    st.caption(build_heatmap_supporting_insight(display_corr_matrix, method))
 
     if show_table:
         st.write("Correlation matrix")
@@ -480,7 +547,11 @@ def main() -> None:
     ).copy()
 
     raw_lollipop_df = filter_correlation_features(raw_lollipop_df)
-    corr_df_plot = raw_lollipop_df.head(controls["top_n"]).copy()
+    ranked_lollipop_df = apply_lollipop_ranking_mode(
+        raw_lollipop_df,
+        controls["ranking_mode"],
+    )
+    corr_df_plot = ranked_lollipop_df.head(controls["top_n"]).copy()
 
     full_corr_matrix = an.compute_correlation_matrix(
         album_analytics_df=album_analytics_df,
@@ -501,6 +572,7 @@ def main() -> None:
     st.caption(
         build_correlation_context_caption(
             method=controls["method"],
+            ranking_mode=controls["ranking_mode"],
             top_n=controls["top_n"],
             rows_loaded=len(album_analytics_df),
             heatmap_scope=controls["heatmap_scope"],
@@ -515,6 +587,7 @@ def main() -> None:
     render_lollipop_section(
         corr_df_plot=corr_df_plot,
         method=controls["method"],
+        ranking_mode=controls["ranking_mode"],
         show_table=controls["show_lollipop_table"],
     )
 

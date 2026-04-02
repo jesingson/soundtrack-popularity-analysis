@@ -891,6 +891,16 @@ def get_correlation_controls() -> dict:
         ),
     )
 
+    ranking_mode = st.sidebar.selectbox(
+        "Lollipop ranking mode",
+        options=["Absolute", "Positive only", "Negative only"],
+        index=0,
+        help=(
+            "Absolute shows the strongest relationships by magnitude. "
+            "Positive only and Negative only restrict the ranking to one direction."
+        ),
+    )
+
     top_n = st.sidebar.slider(
         "Top features in lollipop chart",
         min_value=5,
@@ -936,6 +946,7 @@ def get_correlation_controls() -> dict:
 
     return {
         "method": method,
+        "ranking_mode": ranking_mode,
         "top_n": top_n,
         "heatmap_scope": heatmap_scope,
         "heatmap_top_n": heatmap_top_n,
