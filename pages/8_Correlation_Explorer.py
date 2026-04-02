@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 
 import analysis as an
 from app.app_controls import get_correlation_controls
@@ -286,38 +287,55 @@ def build_heatmap_supporting_insight(
     method: str,
 ) -> str:
     """
-    Build a data-reactive supporting insight for the heatmap.
+    Build a short supporting insight for the correlation heatmap.
 
-    Uses ui.py display labels so the narrative matches the rest of the app.
+    Args:
+        corr_matrix: Correlation matrix used in the heatmap.
+        method: Selected correlation method.
+
+    Returns:
+        str: Supporting insight sentence.
     """
-    if corr_matrix.empty:
-        return ""
+    if corr_matrix is None or corr_matrix.empty:
+        return "💡 No heatmap insight is available."
 
-    numeric_matrix = corr_matrix.copy()
-    if numeric_matrix.shape[0] < 2:
+    numeric_matrix = corr_matrix.select_dtypes(include="number").copy()
+
+    if numeric_matrix.empty or numeric_matrix.shape[0] < 2:
         return "💡 Not enough features remain to summarize pairwise relationships."
 
+    # Take absolute values, then mask the diagonal without mutating the
+    # underlying NumPy array in place. This is safer on Streamlit Cloud /
+    # newer pandas+NumPy combinations where .values may be read-only.
     abs_matrix = numeric_matrix.abs().copy()
-    np.fill_diagonal(abs_matrix.values, np.nan)
+    diag_mask = pd.DataFrame(
+        np.eye(len(abs_matrix), dtype=bool),
+        index=abs_matrix.index,
+        columns=abs_matrix.columns,
+    )
+    abs_matrix = abs_matrix.mask(diag_mask)
 
     stacked_abs = abs_matrix.stack(dropna=True)
     if stacked_abs.empty:
-        return "💡 No pairwise feature relationships remain after filtering."
+        return "💡 Not enough off-diagonal correlations remain to summarize."
 
     top_pair = stacked_abs.sort_values(ascending=False).index[0]
-    top_abs_value = float(stacked_abs.loc[top_pair])
-    signed_value = float(numeric_matrix.loc[top_pair[0], top_pair[1]])
+    top_value = float(stacked_abs.loc[top_pair])
 
-    feature_a = get_display_label(str(top_pair[0]))
-    feature_b = get_display_label(str(top_pair[1]))
-
-    high_pairs = int((stacked_abs >= 0.70).sum())
-    moderate_pairs = int((stacked_abs >= 0.50).sum())
+    strength_label = (
+        "very strong"
+        if top_value >= 0.70 else
+        "strong"
+        if top_value >= 0.50 else
+        "moderate"
+        if top_value >= 0.30 else
+        "weak"
+    )
 
     return (
-        f"💡 The strongest visible {method.title()} feature-feature relationship is "
-        f"{feature_a} ↔ {feature_b} (r = {signed_value:.3f}, |r| = {top_abs_value:.3f}). "
-        f"There are {moderate_pairs:,} pair(s) with |r| ≥ 0.50, including {high_pairs:,} with |r| ≥ 0.70."
+        f"💡 The strongest off-diagonal {method.lower()} relationship in the "
+        f"visible heatmap is between **{top_pair[0]}** and **{top_pair[1]}** "
+        f"(absolute correlation {top_value:.2f}), which is {strength_label}."
     )
 
 
@@ -355,34 +373,27 @@ def build_heatmap_feature_subset(
     return corr_matrix.loc[available_features, available_features].copy()
 
 def render_lollipop_section(
-    album_analytics_df,
+    corr_df_plot: pd.DataFrame,
     method: str,
-    top_n: int,
     show_table: bool,
 ) -> None:
     """
-    Render the lollipop chart section.
-
-    Args:
-        album_analytics_df: Analysis-ready album dataframe.
-        method: Correlation method.
-        top_n: Number of top features to display.
-        show_table: Whether to show the underlying dataframe.
+    Render the lollipop chart section using precomputed data.
     """
     st.subheader("Feature Correlations with Album Popularity")
 
-    corr_df_plot = an.prepare_lollipop_data(
-        album_analytics_df=album_analytics_df,
-        target_col="log_lfm_album_listeners",
-        method=method,
-    ).head(top_n).copy()
+    display_df = apply_display_labels_to_lollipop_df(corr_df_plot)
 
-    chart = an.plot_lollipop_chart(corr_df_plot)
+    chart = an.plot_lollipop_chart(display_df)
     st.altair_chart(chart, width="stretch")
+
+    render_correlation_insight_cards(
+        apply_display_labels_to_lollipop_df(corr_df_plot)
+    )
 
     if show_table:
         st.dataframe(
-            rename_columns_for_display(corr_df_plot),
+            rename_columns_for_display(display_df),
             width="stretch",
         )
 
@@ -498,12 +509,13 @@ def main() -> None:
         )
     )
 
-    render_correlation_insight_cards(corr_df_plot)
+    render_correlation_insight_cards(
+        apply_display_labels_to_lollipop_df(corr_df_plot)
+    )
 
     render_lollipop_section(
-        album_analytics_df=album_analytics_df,
+        corr_df_plot=corr_df_plot,
         method=controls["method"],
-        top_n=controls["top_n"],
         show_table=controls["show_lollipop_table"],
     )
 
