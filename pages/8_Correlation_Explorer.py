@@ -304,9 +304,6 @@ def build_heatmap_supporting_insight(
     if numeric_matrix.empty or numeric_matrix.shape[0] < 2:
         return "💡 Not enough features remain to summarize pairwise relationships."
 
-    # Take absolute values, then mask the diagonal without mutating the
-    # underlying NumPy array in place. This is safer on Streamlit Cloud /
-    # newer pandas+NumPy combinations where .values may be read-only.
     abs_matrix = numeric_matrix.abs().copy()
     diag_mask = pd.DataFrame(
         np.eye(len(abs_matrix), dtype=bool),
@@ -315,7 +312,9 @@ def build_heatmap_supporting_insight(
     )
     abs_matrix = abs_matrix.mask(diag_mask)
 
-    stacked_abs = abs_matrix.stack(dropna=True)
+    stacked_abs = abs_matrix.stack()
+    stacked_abs = stacked_abs.dropna()
+
     if stacked_abs.empty:
         return "💡 Not enough off-diagonal correlations remain to summarize."
 
