@@ -772,11 +772,22 @@ def _add_track_structure_fields(
     track_df["is_first_five_tracks"] = track_df["track_number"] <= 5
 
     # Relative bucket labels are handy for later exploratory/stat pages too.
-    track_df["track_position_bucket"] = pd.cut(
-        track_df["relative_track_position"],
-        bins=[-0.001, 0.25, 0.50, 0.75, 1.001],
-        labels=["Early", "Early-mid", "Late-mid", "Late"],
-    ).astype(str)
+    def bucket_track_position(p: float) -> str | None:
+        if pd.isna(p):
+            return None
+        if p <= 0.20:
+            return "Opening"
+        if p <= 0.40:
+            return "Early"
+        if p <= 0.60:
+            return "Middle"
+        if p <= 0.80:
+            return "Late"
+        return "Closing"
+
+    track_df["track_position_bucket"] = track_df["relative_track_position"].apply(
+        bucket_track_position
+    )
 
     return track_df
 
@@ -829,6 +840,133 @@ def build_track_explorer_dataset(
     )
 
     track_df = _add_track_structure_fields(track_df)
+
+    sort_cols = [
+        col for col in [
+            "film_title",
+            "album_title",
+            "release_group_mbid",
+            "tmdb_id",
+            "track_number",
+        ]
+        if col in track_df.columns
+    ]
+
+    if sort_cols:
+        track_df = track_df.sort_values(sort_cols).reset_index(drop=True)
+
+    return track_df
+
+def build_track_data_explorer_dataset(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a rich track-level dataframe for the Track Data Explorer.
+
+    This dataset is the broad track-grain foundation for Page 30. It keeps
+    one row per visible track, attaches album metadata for shared filtering,
+    adds track-structure helper fields, and applies reusable audio cleaning
+    so cleaned audio features are available directly in the page.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Enriched track-level exploration dataframe.
+    """
+    album_metadata_df = _get_track_album_metadata(albums_df, wide_df).copy()
+    track_df = _prepare_track_base(wide_df).copy()
+    track_df = clean_track_audio_features(track_df)
+
+    # Bring in album-level popularity fields for contextual filtering.
+    album_metric_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+    ]
+    available_album_metric_cols = [
+        col for col in album_metric_cols
+        if col in albums_df.columns or col in ["release_group_mbid", "tmdb_id"]
+    ]
+
+    if {"lfm_album_listeners", "lfm_album_playcount"} - set(album_metadata_df.columns):
+        album_metric_df = albums_df[available_album_metric_cols].drop_duplicates()
+        album_metadata_df = album_metadata_df.merge(
+            album_metric_df,
+            on=["release_group_mbid", "tmdb_id"],
+            how="left",
+            validate="1:1",
+        )
+
+    observed_counts_df = (
+        track_df.groupby(
+            ["release_group_mbid", "tmdb_id"],
+            as_index=False,
+        )
+        .agg(
+            track_count_observed=("track_number", "nunique"),
+            max_track_number_observed=("track_number", "max"),
+        )
+    )
+
+    track_df = track_df.merge(
+        observed_counts_df,
+        on=["release_group_mbid", "tmdb_id"],
+        how="left",
+        validate="m:1",
+    )
+
+    track_df = track_df.merge(
+        album_metadata_df,
+        on=["release_group_mbid", "tmdb_id"],
+        how="left",
+        validate="m:1",
+    )
+
+    track_df = _add_track_structure_fields(track_df)
+
+    # Audio completeness helpers for profile cards / filtering.
+    audio_feature_cols = [
+        col for col in [
+            "energy",
+            "danceability",
+            "happiness",
+            "acousticness",
+            "instrumentalness",
+            "liveness",
+            "speechiness",
+            "tempo",
+            "loudness",
+            "duration_seconds",
+            "key",
+            "mode",
+            "camelot_number",
+            "camelot_mode",
+        ]
+        if col in track_df.columns
+    ]
+
+    if audio_feature_cols:
+        track_df["has_any_audio_features"] = track_df[audio_feature_cols].notna().any(axis=1)
+        track_df["audio_feature_count"] = track_df[audio_feature_cols].notna().sum(axis=1)
+    else:
+        track_df["has_any_audio_features"] = False
+        track_df["audio_feature_count"] = 0
+
+    if {"lfm_track_listeners", "lfm_album_listeners"}.issubset(track_df.columns):
+        track_df["track_share_of_album_listeners"] = safe_ratio(
+            track_df["lfm_track_listeners"],
+            track_df["lfm_album_listeners"],
+        )
+
+    if {"lfm_track_playcount", "lfm_album_playcount"}.issubset(track_df.columns):
+        track_df["track_share_of_album_playcount"] = safe_ratio(
+            track_df["lfm_track_playcount"],
+            track_df["lfm_album_playcount"],
+        )
 
     sort_cols = [
         col for col in [
@@ -1173,6 +1311,392 @@ def safe_ratio(
     out = numerator / denominator
     out = out.where(denominator > 0)
     return out.replace([np.inf, -np.inf], np.nan)
+
+def _first_non_null(series: pd.Series):
+    """
+    Return the first non-null value in a series, if any.
+
+    Args:
+        series: Input series.
+
+    Returns:
+        object: First non-null value, or NaN if none exist.
+    """
+    non_null = series.dropna()
+    if non_null.empty:
+        return np.nan
+    return non_null.iloc[0]
+
+
+def _compute_top3_sum(series: pd.Series) -> float:
+    """
+    Return the sum of the top 3 non-null numeric values in a series.
+
+    Args:
+        series: Input series.
+
+    Returns:
+        float: Sum of the top 3 values, or NaN when no valid values exist.
+    """
+    values = pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=float)
+    if len(values) == 0:
+        return np.nan
+
+    values = np.sort(values)[::-1]
+    return float(values[:3].sum())
+
+
+def _assign_album_ratio_bucket(value: float) -> str | None:
+    """
+    Bucket a top-track / album ratio.
+
+    Args:
+        value: Ratio value.
+
+    Returns:
+        str | None: Bucket label or None when missing.
+    """
+    if pd.isna(value):
+        return None
+    if value < 1:
+        return "<1x"
+    if value < 2:
+        return "1–2x"
+    if value < 5:
+        return "2–5x"
+    if value < 10:
+        return "5–10x"
+    return "10x+"
+
+
+def _assign_total_share_bucket(value: float) -> str | None:
+    """
+    Bucket a top-track share of total track performance.
+
+    Args:
+        value: Share value.
+
+    Returns:
+        str | None: Bucket label or None when missing.
+    """
+    if pd.isna(value):
+        return None
+    if value < 0.10:
+        return "<10%"
+    if value < 0.20:
+        return "10–20%"
+    if value < 0.35:
+        return "20–35%"
+    if value < 0.50:
+        return "35–50%"
+    return "50%+"
+
+
+def build_track_album_relationship_dataset(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a one-row-per-album dataset for the Track–Album Relationship Explorer.
+
+    This dataset is designed to align with the shared explorer architecture:
+    it preserves the common metadata fields needed by global filters
+    (`film_year`, `film_genres`, `album_genres_display`,
+    `composer_primary_clean`, `label_names`) while also adding the
+    track-vs-album aggregation and dominance fields used by Page 21.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: One-row-per-album relationship dataset.
+    """
+    album_metadata_df = _get_track_album_metadata(albums_df, wide_df).copy()
+    track_df = _prepare_track_base(wide_df).copy()
+
+    group_keys = ["release_group_mbid", "tmdb_id"]
+
+    base_track_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "track_number",
+        "track_title",
+        "lfm_track_listeners",
+        "lfm_track_playcount",
+    ]
+    track_df = track_df[[col for col in base_track_cols if col in track_df.columns]].copy()
+
+    for col in ["lfm_track_listeners", "lfm_track_playcount"]:
+        if col in track_df.columns:
+            track_df[col] = pd.to_numeric(track_df[col], errors="coerce")
+
+    agg_spec: dict[str, object] = {
+        "track_title": _first_non_null,
+        "track_number": "nunique",
+    }
+
+    if "lfm_track_listeners" in track_df.columns:
+        agg_spec["lfm_track_listeners"] = ["max", "mean", "median", "sum", _compute_top3_sum]
+
+    if "lfm_track_playcount" in track_df.columns:
+        agg_spec["lfm_track_playcount"] = ["max", "mean", "median", "sum", _compute_top3_sum]
+
+    grouped = track_df.groupby(group_keys, dropna=False).agg(agg_spec)
+    grouped.columns = [
+        "_".join([part for part in col if part]).strip("_")
+        if isinstance(col, tuple) else col
+        for col in grouped.columns.to_flat_index()
+    ]
+    grouped = grouped.reset_index()
+
+    rename_map = {
+        "track_title__first_non_null": "sample_track_title",
+        "track_title__first_non_null_": "sample_track_title",
+        "track_title__first_non_null__": "sample_track_title",
+        "track_title__first_non_null____": "sample_track_title",
+        "track_title__first_non_null_____": "sample_track_title",
+        "track_title__first_non_null______": "sample_track_title",
+        "track_title__first_non_null_______": "sample_track_title",
+        "track_title__first_non_null________": "sample_track_title",
+        "track_title__first_non_null_________": "sample_track_title",
+        "track_title__first_non_null__________": "sample_track_title",
+        "track_title__first_non_null___________": "sample_track_title",
+        "track_title__first_non_null____________": "sample_track_title",
+        "track_title__first_non_null_____________": "sample_track_title",
+        "track_title__first_non_null______________": "sample_track_title",
+        "track_title__first_non_null_______________": "sample_track_title",
+        "track_title__first_non_null________________": "sample_track_title",
+        "track_title__first_non_null_________________": "sample_track_title",
+        "track_title__first_non_null__________________": "sample_track_title",
+        "track_title__first_non_null___________________": "sample_track_title",
+        "track_title__first_non_null____________________": "sample_track_title",
+        "track_title__first_non_null_____________________": "sample_track_title",
+        "track_title__first_non_null______________________": "sample_track_title",
+        "track_title__first_non_null_______________________": "sample_track_title",
+        "track_title__first_non_null________________________": "sample_track_title",
+        "track_title__first_non_null_________________________": "sample_track_title",
+        "track_title__first_non_null__________________________": "sample_track_title",
+        "track_title__first_non_null___________________________": "sample_track_title",
+        "track_title__first_non_null____________________________": "sample_track_title",
+        "track_title__first_non_null_____________________________": "sample_track_title",
+        "track_title__first_non_null______________________________": "sample_track_title",
+        "track_title__first_non_null_______________________________": "sample_track_title",
+        "track_number_nunique": "track_count_observed",
+        "lfm_track_listeners_max": "track_max_listeners",
+        "lfm_track_listeners_mean": "track_mean_listeners",
+        "lfm_track_listeners_median": "track_median_listeners",
+        "lfm_track_listeners_sum": "track_total_listeners",
+        "lfm_track_listeners__compute_top3_sum": "track_top3_listeners",
+        "lfm_track_playcount_max": "track_max_playcount",
+        "lfm_track_playcount_mean": "track_mean_playcount",
+        "lfm_track_playcount_median": "track_median_playcount",
+        "lfm_track_playcount_sum": "track_total_playcount",
+        "lfm_track_playcount__compute_top3_sum": "track_top3_playcount",
+    }
+
+    # More robust rename handling for pandas flattening differences
+    actual_rename_map = {}
+    for col in grouped.columns:
+        if col == "track_title__first_non_null" or col == "track_title__first_non_null_":
+            actual_rename_map[col] = "sample_track_title"
+        elif col == "track_title_first_non_null":
+            actual_rename_map[col] = "sample_track_title"
+        elif col in rename_map:
+            actual_rename_map[col] = rename_map[col]
+
+    grouped = grouped.rename(columns=actual_rename_map)
+
+    metric_cols_to_merge = [
+        "release_group_mbid",
+        "tmdb_id",
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+    ]
+    metric_slice = [
+        col for col in metric_cols_to_merge
+        if col in albums_df.columns or col in group_keys
+    ]
+
+    if {"lfm_album_listeners", "lfm_album_playcount"} - set(album_metadata_df.columns):
+        album_metric_df = albums_df[metric_slice].drop_duplicates()
+        album_metadata_df = album_metadata_df.merge(
+            album_metric_df,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    grouped = grouped.merge(
+        album_metadata_df,
+        on=group_keys,
+        how="left",
+        validate="1:1",
+    )
+
+    # Reconcile track-count columns so the final dataset always exposes
+    # the shared plain `n_tracks` field expected by Page 21 and other helpers.
+    if "n_tracks_x" in grouped.columns or "n_tracks_y" in grouped.columns:
+        if "n_tracks_y" in grouped.columns:
+            grouped["n_tracks"] = grouped["n_tracks_y"]
+        else:
+            grouped["n_tracks"] = grouped["n_tracks_x"]
+
+        if "n_tracks_x" in grouped.columns:
+            grouped["n_tracks"] = grouped["n_tracks"].fillna(grouped["n_tracks_x"])
+
+        grouped = grouped.drop(
+            columns=[col for col in ["n_tracks_x", "n_tracks_y"] if col in grouped.columns]
+        )
+
+    if "n_tracks" not in grouped.columns and "track_count_observed" in grouped.columns:
+        grouped["n_tracks"] = grouped["track_count_observed"]
+
+    if "n_tracks" in grouped.columns and "track_count_observed" in grouped.columns:
+        grouped["n_tracks"] = grouped["n_tracks"].fillna(grouped["track_count_observed"])
+    if {"track_max_listeners", "lfm_album_listeners"}.issubset(grouped.columns):
+        grouped["top_to_album_listeners"] = safe_ratio(
+            grouped["track_max_listeners"],
+            grouped["lfm_album_listeners"],
+        )
+
+    if {"track_max_listeners", "track_total_listeners"}.issubset(grouped.columns):
+        grouped["top_to_total_listeners"] = safe_ratio(
+            grouped["track_max_listeners"],
+            grouped["track_total_listeners"],
+        )
+
+    if {"track_max_playcount", "lfm_album_playcount"}.issubset(grouped.columns):
+        grouped["top_to_album_playcount"] = safe_ratio(
+            grouped["track_max_playcount"],
+            grouped["lfm_album_playcount"],
+        )
+
+    if {"track_max_playcount", "track_total_playcount"}.issubset(grouped.columns):
+        grouped["top_to_total_playcount"] = safe_ratio(
+            grouped["track_max_playcount"],
+            grouped["track_total_playcount"],
+        )
+
+    if {"track_max_listeners", "track_mean_listeners"}.issubset(grouped.columns):
+        grouped["top_to_mean_track_listeners"] = safe_ratio(
+            grouped["track_max_listeners"],
+            grouped["track_mean_listeners"],
+        )
+
+    if {"track_max_listeners", "track_median_listeners"}.issubset(grouped.columns):
+        grouped["top_to_median_track_listeners"] = safe_ratio(
+            grouped["track_max_listeners"],
+            grouped["track_median_listeners"],
+        )
+
+    if {"track_max_playcount", "track_mean_playcount"}.issubset(grouped.columns):
+        grouped["top_to_mean_track_playcount"] = safe_ratio(
+            grouped["track_max_playcount"],
+            grouped["track_mean_playcount"],
+        )
+
+    if {"track_max_playcount", "track_median_playcount"}.issubset(grouped.columns):
+        grouped["top_to_median_track_playcount"] = safe_ratio(
+            grouped["track_max_playcount"],
+            grouped["track_median_playcount"],
+        )
+
+    if "top_to_album_listeners" in grouped.columns:
+        grouped["dominance_bucket_top_to_album_listeners"] = grouped[
+            "top_to_album_listeners"
+        ].apply(_assign_album_ratio_bucket)
+
+    if "top_to_total_listeners" in grouped.columns:
+        grouped["dominance_bucket_top_to_total_listeners"] = grouped[
+            "top_to_total_listeners"
+        ].apply(_assign_total_share_bucket)
+
+    if "top_to_album_playcount" in grouped.columns:
+        grouped["dominance_bucket_top_to_album_playcount"] = grouped[
+            "top_to_album_playcount"
+        ].apply(_assign_album_ratio_bucket)
+
+    if "top_to_total_playcount" in grouped.columns:
+        grouped["dominance_bucket_top_to_total_playcount"] = grouped[
+            "top_to_total_playcount"
+        ].apply(_assign_total_share_bucket)
+
+    # Attach top-track identity separately for listeners and playcount.
+    identity_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "track_title",
+        "track_number",
+        "lfm_track_listeners",
+        "lfm_track_playcount",
+    ]
+    identity_df = track_df[[col for col in identity_cols if col in track_df.columns]].copy()
+
+    if {"lfm_track_listeners", "track_title", "track_number"}.issubset(identity_df.columns):
+        top_listener_df = (
+            identity_df.sort_values(
+                ["release_group_mbid", "tmdb_id", "lfm_track_listeners", "track_number"],
+                ascending=[True, True, False, True],
+            )
+            .drop_duplicates(subset=group_keys, keep="first")
+            [[
+                "release_group_mbid",
+                "tmdb_id",
+                "track_title",
+                "track_number",
+                "lfm_track_listeners",
+            ]]
+            .rename(columns={
+                "track_title": "top_track_title_listeners",
+                "track_number": "top_track_number_listeners",
+                "lfm_track_listeners": "top_track_listeners_raw",
+            })
+        )
+
+        grouped = grouped.merge(
+            top_listener_df,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    if {"lfm_track_playcount", "track_title", "track_number"}.issubset(identity_df.columns):
+        top_playcount_df = (
+            identity_df.sort_values(
+                ["release_group_mbid", "tmdb_id", "lfm_track_playcount", "track_number"],
+                ascending=[True, True, False, True],
+            )
+            .drop_duplicates(subset=group_keys, keep="first")
+            [[
+                "release_group_mbid",
+                "tmdb_id",
+                "track_title",
+                "track_number",
+                "lfm_track_playcount",
+            ]]
+            .rename(columns={
+                "track_title": "top_track_title_playcount",
+                "track_number": "top_track_number_playcount",
+                "lfm_track_playcount": "top_track_playcount_raw",
+            })
+        )
+
+        grouped = grouped.merge(
+            top_playcount_df,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    sort_cols = [
+        col for col in ["film_title", "album_title", "release_group_mbid", "tmdb_id"]
+        if col in grouped.columns
+    ]
+    if sort_cols:
+        grouped = grouped.sort_values(sort_cols).reset_index(drop=True)
+
+    return grouped
 
 def build_track_audio_cohesion_dataset(
     albums_df: pd.DataFrame,

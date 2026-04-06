@@ -77,6 +77,29 @@ def load_track_explorer_data(
     return dp.build_track_explorer_dataset(albums_df, wide_df)
 
 @st.cache_data
+def load_track_data_explorer_data(
+    album_file_path: str = "data/albums.csv",
+    wide_file_path: str = "data/wide.csv",
+) -> pd.DataFrame:
+    """
+    Load source CSVs and build the exploration-ready track dataframe used by
+    the Track Data Explorer.
+
+    Args:
+        album_file_path: Path to the album-level CSV.
+        wide_file_path: Path to the wide-format CSV.
+
+    Returns:
+        pd.DataFrame: Rich track-level exploration dataframe with cleaned
+        audio features and album metadata context.
+    """
+    albums_df, wide_df = load_source_data(
+        album_file_path=album_file_path,
+        wide_file_path=wide_file_path,
+    )
+    return dp.build_track_data_explorer_dataset(albums_df, wide_df)
+
+@st.cache_data
 def load_analysis_data(
     album_file_path: str = "data/albums.csv",
     wide_file_path: str = "data/wide.csv",
@@ -160,6 +183,28 @@ def load_ridge_dynamic_groups(
         y_col=y_col,
         top_n=top_n,
     )
+
+@st.cache_data
+def load_track_album_relationship_data(
+    album_file_path: str = "data/albums.csv",
+    wide_file_path: str = "data/wide.csv",
+) -> pd.DataFrame:
+    """
+    Load source CSVs and build the one-row-per-album track/album
+    relationship dataset used by Page 21.
+
+    Args:
+        album_file_path: Path to the album-level CSV.
+        wide_file_path: Path to the wide-format CSV.
+
+    Returns:
+        pd.DataFrame: Track–album relationship dataset.
+    """
+    albums_df, wide_df = load_source_data(
+        album_file_path=album_file_path,
+        wide_file_path=wide_file_path,
+    )
+    return dp.build_track_album_relationship_dataset(albums_df, wide_df)
 
 @st.cache_data
 def load_track_audio_cohesion_data(

@@ -5,7 +5,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from app.app_controls import get_global_filter_controls
+from app.app_controls import (
+    get_global_filter_controls,
+    get_track_cohesion_controls,
+)
 from app.app_data import load_track_audio_cohesion_data
 from app.data_filters import filter_dataset
 from app.explorer_shared import (
@@ -139,102 +142,6 @@ def add_cohesion_display_fields(cohesion_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     return df
-
-
-def get_track_cohesion_controls(composer_options: list[str]) -> dict:
-    """
-    Build sidebar controls for the Track Cohesion Explorer.
-
-    Args:
-        composer_options: Available composer values.
-
-    Returns:
-        dict: Selected page controls.
-    """
-    st.sidebar.header("Track Cohesion Controls")
-
-    metric_labels = sorted(
-        METRIC_SPECS.keys(),
-        key=lambda x: METRIC_SPECS[x]["default_rank"],
-    )
-
-    cohesion_metric_label = st.sidebar.selectbox(
-        "Cohesion metric",
-        options=metric_labels,
-        index=0,
-        help=(
-            "Choose which within-album cohesion dimension to compare "
-            "against popularity and dominance."
-        ),
-    )
-
-    album_outcome_label = st.sidebar.selectbox(
-        "Album outcome",
-        options=list(ALBUM_OUTCOME_OPTIONS.keys()),
-        index=0,
-        help="Choose the album-level success metric for the popularity chart.",
-    )
-
-    color_label = st.sidebar.selectbox(
-        "Color by",
-        options=list(COLOR_OPTIONS.keys()),
-        index=0,
-    )
-
-    selected_composers = st.sidebar.multiselect(
-        "Composers",
-        options=composer_options,
-        default=[],
-        help="Optionally restrict the page to a selected composer subset.",
-    )
-
-    use_log_scale = st.sidebar.checkbox(
-        "Log-scale album outcome",
-        value=True,
-        help="Apply log10 scaling to the album outcome chart.",
-    )
-
-    min_tracks = st.sidebar.slider(
-        "Minimum tracks per album",
-        min_value=1,
-        max_value=20,
-        value=3,
-        step=1,
-        help="Hide albums with too few observed tracks for stable cohesion estimates.",
-    )
-
-    show_strength_chart = st.sidebar.checkbox(
-        "Show metric strength comparison",
-        value=True,
-    )
-
-    show_binned_view = st.sidebar.checkbox(
-        "Show low / medium / high bins",
-        value=True,
-    )
-
-    show_table = st.sidebar.checkbox(
-        "Show source table",
-        value=False,
-    )
-
-    return {
-        "cohesion_metric_label": cohesion_metric_label,
-        "cohesion_metric_col": METRIC_SPECS[cohesion_metric_label]["col"],
-        "cohesion_metric_family": METRIC_SPECS[cohesion_metric_label]["family"],
-        "cohesion_metric_short_label": METRIC_SPECS[cohesion_metric_label]["short_label"],
-        "cohesion_metric_description": METRIC_SPECS[cohesion_metric_label]["description"],
-        "album_outcome_label": album_outcome_label,
-        "album_outcome_col": ALBUM_OUTCOME_OPTIONS[album_outcome_label],
-        "color_label": color_label,
-        "color_col": COLOR_OPTIONS[color_label],
-        "selected_composers": selected_composers,
-        "use_log_scale": use_log_scale,
-        "min_tracks": min_tracks,
-        "show_strength_chart": show_strength_chart,
-        "show_binned_view": show_binned_view,
-        "show_table": show_table,
-    }
 
 
 def filter_cohesion_df(
@@ -1095,6 +1002,9 @@ def main() -> None:
 
     controls = get_track_cohesion_controls(
         composer_options=composer_options,
+        metric_specs=METRIC_SPECS,
+        album_outcome_options=ALBUM_OUTCOME_OPTIONS,
+        color_options=COLOR_OPTIONS,
     )
 
     plot_df = filter_cohesion_df(

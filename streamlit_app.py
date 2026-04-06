@@ -12,7 +12,8 @@ def render_home() -> None:
         project.
 
         Use the navigation in the left sidebar to explore album-level patterns,
-        statistical modeling results, and track-focused analysis.
+        statistical modeling results, track-level data exploration, and
+        album–track relationship analysis.
         """
     )
 
@@ -50,7 +51,13 @@ navigation = st.navigation(
             st.Page("pages/9_Ridge_Explorer.py", title="Ridge Explorer"),
             st.Page("pages/10_Regression_Explorer.py", title="Regression Explorer"),
         ],
-        "🟩 Track Analysis": [
+        "🟩 Track Data Exploration": [
+            st.Page(
+                "pages/30_Track_Data_Explorer.py",
+                title="Track Data Explorer",
+            ),
+        ],
+        "🟨 Album–Track Analysis": [
             st.Page(
                 "pages/20_Track_Structure_Explorer.py",
                 title="Track Structure Explorer",

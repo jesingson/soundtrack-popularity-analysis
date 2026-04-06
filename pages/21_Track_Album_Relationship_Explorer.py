@@ -5,50 +5,23 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from app.app_controls import get_track_album_relationship_controls
-from app.app_data import load_source_data
-from app.ui import apply_app_styles, rename_columns_for_display
+from app.app_controls import (
+    get_global_filter_controls,
+    get_track_album_relationship_controls,
+)
+from app.app_data import load_track_album_relationship_data
+from app.data_filters import filter_dataset
+from app.explorer_shared import (
+    add_film_year_bucket,
+    add_standard_multivalue_groups,
+    get_clean_composer_options,
+    get_global_filter_inputs,
+    rename_and_dedupe_for_display,
+    select_unique_existing_columns,
+)
+from app.ui import apply_app_styles
 
 
-ALBUM_FILTER_FLAG_MAP = {
-    "Ambient / Experimental": "album_ambient_experimental",
-    "Classical / Orchestral": "album_classical_orchestral",
-    "Electronic": "album_electronic",
-    "Hip-Hop / R&B": "album_hip_hop_rnb",
-    "Pop": "album_pop",
-    "Rock": "album_rock",
-    "World / Folk": "album_world_folk",
-}
-
-FILM_FILTER_FLAG_MAP = {
-    "Action": "film_is_action",
-    "Adventure": "film_is_adventure",
-    "Animation": "film_is_animation",
-    "Comedy": "film_is_comedy",
-    "Crime": "film_is_crime",
-    "Documentary": "film_is_documentary",
-    "Drama": "film_is_drama",
-    "Family": "film_is_family",
-    "Fantasy": "film_is_fantasy",
-    "History": "film_is_history",
-    "Horror": "film_is_horror",
-    "Music": "film_is_music",
-    "Mystery": "film_is_mystery",
-    "Romance": "film_is_romance",
-    "Science Fiction": "film_is_science_fiction",
-    "TV Movie": "film_is_tv_movie",
-    "Thriller": "film_is_thriller",
-    "War": "film_is_war",
-    "Western": "film_is_western",
-}
-
-ALBUM_GENRE_FLAG_COLS = list(ALBUM_FILTER_FLAG_MAP.values())
-FILM_GENRE_FLAG_COLS = list(FILM_FILTER_FLAG_MAP.values())
-
-GENRE_LABEL_MAP = {
-    **{col: label for label, col in ALBUM_FILTER_FLAG_MAP.items()},
-    **{col: label for label, col in FILM_FILTER_FLAG_MAP.items()},
-}
 
 DOMINANCE_BUCKET_ORDER = ["<1x", "1–2x", "2–5x", "5–10x", "10x+"]
 
@@ -93,56 +66,6 @@ METRIC_FIELD_MAP = {
 DOMINANCE_BUCKET_ORDER_ALBUM = ["<1x", "1–2x", "2–5x", "5–10x", "10x+"]
 DOMINANCE_BUCKET_ORDER_TOTAL = ["<10%", "10–20%", "20–35%", "35–50%", "50%+"]
 
-def first_non_null(series: pd.Series):
-    """Return the first non-null value in a series, if any."""
-    non_null = series.dropna()
-    if non_null.empty:
-        return np.nan
-    return non_null.iloc[0]
-
-
-def compute_top3_sum(series: pd.Series) -> float:
-    """Return the sum of the top 3 non-null values in a series."""
-    values = pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=float)
-    if len(values) == 0:
-        return np.nan
-    values = np.sort(values)[::-1]
-    return float(values[:3].sum())
-
-
-def safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-    """Compute a safe ratio that returns NaN when the denominator is missing or <= 0."""
-    out = numerator / denominator
-    out = out.where(denominator > 0)
-    return out.replace([np.inf, -np.inf], np.nan)
-
-
-def assign_album_ratio_bucket(value: float) -> str | None:
-    if pd.isna(value):
-        return None
-    if value < 1:
-        return "<1x"
-    if value < 2:
-        return "1–2x"
-    if value < 5:
-        return "2–5x"
-    if value < 10:
-        return "5–10x"
-    return "10x+"
-
-def assign_total_share_bucket(value: float) -> str | None:
-    if pd.isna(value):
-        return None
-    if value < 0.10:
-        return "<10%"
-    if value < 0.20:
-        return "10–20%"
-    if value < 0.35:
-        return "20–35%"
-    if value < 0.50:
-        return "35–50%"
-    return "50%+"
-
 def get_dominance_label(dominance_metric_key: str, metric_label: str) -> str:
     """Return a user-facing label for the selected dominance metric."""
     if dominance_metric_key == "top_to_album":
@@ -155,186 +78,6 @@ def get_dominance_bucket_order(dominance_metric_key: str) -> list[str]:
         return DOMINANCE_BUCKET_ORDER_ALBUM
     return DOMINANCE_BUCKET_ORDER_TOTAL
 
-def derive_multi_label_group(
-    df: pd.DataFrame,
-    flag_cols: list[str],
-    output_col: str,
-) -> pd.DataFrame:
-    """
-    Collapse binary genre flags into a single grouped label.
-
-    One active flag -> genre label
-    Multiple active flags -> Multi-genre
-    No active flags -> Unknown
-    """
-    available_cols = [col for col in flag_cols if col in df.columns]
-
-    if not available_cols:
-        df[output_col] = "Unknown"
-        return df
-
-    def assign_group(row: pd.Series) -> str:
-        active_cols = [col for col in available_cols if row[col] == 1]
-        if len(active_cols) == 1:
-            return GENRE_LABEL_MAP[active_cols[0]]
-        if len(active_cols) > 1:
-            return "Multi-genre"
-        return "Unknown"
-
-    df[output_col] = df[available_cols].apply(assign_group, axis=1)
-    return df
-
-
-@st.cache_data(show_spinner=False)
-def build_track_album_relationship_df() -> pd.DataFrame:
-    """
-    Build the one-row-per-album dataframe used by the Track–Album Relationship Explorer.
-    """
-    _, wide_df = load_source_data()
-
-    keep_cols = [
-        "tmdb_id",
-        "release_group_mbid",
-        "album_title",
-        "film_title",
-        "composer_primary_clean",
-        "label_names",
-        "film_year",
-        "track_id",
-        "lfm_track_listeners",
-        "lfm_track_playcount",
-        "lfm_album_listeners",
-        "lfm_album_playcount",
-        *ALBUM_GENRE_FLAG_COLS,
-        *FILM_GENRE_FLAG_COLS,
-    ]
-
-    available_cols = [col for col in keep_cols if col in wide_df.columns]
-    df = wide_df[available_cols].copy()
-
-    for col in [
-        "lfm_track_listeners",
-        "lfm_track_playcount",
-        "lfm_album_listeners",
-        "lfm_album_playcount",
-        "film_year",
-    ]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    group_cols = ["tmdb_id", "release_group_mbid"]
-
-    agg_dict = {
-        "album_title": first_non_null,
-        "film_title": first_non_null,
-        "composer_primary_clean": first_non_null,
-        "label_names": first_non_null,
-        "film_year": first_non_null,
-        "lfm_album_listeners": first_non_null,
-        "lfm_album_playcount": first_non_null,
-        "track_id": pd.Series.nunique,
-        "lfm_track_listeners": ["max", "mean", "median", "sum", compute_top3_sum],
-        "lfm_track_playcount": ["max", "mean", "median", "sum", compute_top3_sum],
-    }
-
-    for col in ALBUM_GENRE_FLAG_COLS + FILM_GENRE_FLAG_COLS:
-        if col in df.columns:
-            agg_dict[col] = "max"
-
-    grouped = df.groupby(group_cols, dropna=False).agg(agg_dict)
-    grouped.columns = [
-        "_".join([part for part in col if part]).strip("_")
-        if isinstance(col, tuple) else col
-        for col in grouped.columns.to_flat_index()
-    ]
-    grouped = grouped.reset_index()
-
-    grouped = grouped.rename(
-        columns={
-            "album_title_first_non_null": "album_title",
-            "film_title_first_non_null": "film_title",
-            "composer_primary_clean_first_non_null": "composer_primary_clean",
-            "label_names_first_non_null": "label_names",
-            "film_year_first_non_null": "film_year",
-            "lfm_album_listeners_first_non_null": "lfm_album_listeners",
-            "lfm_album_playcount_first_non_null": "lfm_album_playcount",
-            "track_id_nunique": "n_tracks",
-            "lfm_track_listeners_max": "track_max_listeners",
-            "lfm_track_listeners_mean": "track_mean_listeners",
-            "lfm_track_listeners_median": "track_median_listeners",
-            "lfm_track_listeners_sum": "track_total_listeners",
-            "lfm_track_listeners_compute_top3_sum": "track_top3_listeners",
-            "lfm_track_playcount_max": "track_max_playcount",
-            "lfm_track_playcount_mean": "track_mean_playcount",
-            "lfm_track_playcount_median": "track_median_playcount",
-            "lfm_track_playcount_sum": "track_total_playcount",
-            "lfm_track_playcount_compute_top3_sum": "track_top3_playcount",
-            "album_ambient_experimental_max": "album_ambient_experimental",
-            "album_classical_orchestral_max": "album_classical_orchestral",
-            "album_electronic_max": "album_electronic",
-            "album_hip_hop_rnb_max": "album_hip_hop_rnb",
-            "album_pop_max": "album_pop",
-            "album_rock_max": "album_rock",
-            "album_world_folk_max": "album_world_folk",
-            "film_is_action_max": "film_is_action",
-            "film_is_adventure_max": "film_is_adventure",
-            "film_is_animation_max": "film_is_animation",
-            "film_is_comedy_max": "film_is_comedy",
-            "film_is_crime_max": "film_is_crime",
-            "film_is_documentary_max": "film_is_documentary",
-            "film_is_drama_max": "film_is_drama",
-            "film_is_family_max": "film_is_family",
-            "film_is_fantasy_max": "film_is_fantasy",
-            "film_is_history_max": "film_is_history",
-            "film_is_horror_max": "film_is_horror",
-            "film_is_music_max": "film_is_music",
-            "film_is_mystery_max": "film_is_mystery",
-            "film_is_romance_max": "film_is_romance",
-            "film_is_science_fiction_max": "film_is_science_fiction",
-            "film_is_tv_movie_max": "film_is_tv_movie",
-            "film_is_thriller_max": "film_is_thriller",
-            "film_is_war_max": "film_is_war",
-            "film_is_western_max": "film_is_western",
-        }
-    )
-
-    grouped["top_to_album_listeners"] = safe_ratio(
-        grouped["track_max_listeners"],
-        grouped["lfm_album_listeners"],
-    )
-    grouped["top_to_total_listeners"] = safe_ratio(
-        grouped["track_max_listeners"],
-        grouped["track_total_listeners"],
-    )
-    grouped["top_to_album_playcount"] = safe_ratio(
-        grouped["track_max_playcount"],
-        grouped["lfm_album_playcount"],
-    )
-    grouped["top_to_total_playcount"] = safe_ratio(
-        grouped["track_max_playcount"],
-        grouped["track_total_playcount"],
-    )
-
-    grouped["dominance_bucket_top_to_album_listeners"] = grouped[
-        "top_to_album_listeners"
-    ].apply(assign_album_ratio_bucket)
-    grouped["dominance_bucket_top_to_total_listeners"] = grouped[
-        "top_to_total_listeners"
-    ].apply(assign_total_share_bucket)
-
-    grouped["dominance_bucket_top_to_album_playcount"] = grouped[
-        "top_to_album_playcount"
-    ].apply(assign_album_ratio_bucket)
-    grouped["dominance_bucket_top_to_total_playcount"] = grouped[
-        "top_to_total_playcount"
-    ].apply(assign_total_share_bucket)
-
-    grouped = derive_multi_label_group(grouped, ALBUM_GENRE_FLAG_COLS, "album_genre_group")
-    grouped = derive_multi_label_group(grouped, FILM_GENRE_FLAG_COLS, "film_genre_group")
-
-    return grouped
-
-
 def build_parity_line_df(plot_df: pd.DataFrame, x_col: str, y_col: str) -> pd.DataFrame:
     """Build a parity reference line covering the plotted x/y range."""
     min_val = float(min(plot_df[x_col].min(), plot_df[y_col].min()))
@@ -346,87 +89,48 @@ def build_parity_line_df(plot_df: pd.DataFrame, x_col: str, y_col: str) -> pd.Da
         }
     )
 
-def build_track_album_relationship_enhanced_df(album_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add lift metrics and top-track identity fields to the Page 21 dataset.
-
-    Args:
-        album_df: Existing album-level dataframe with track aggregates.
-
-    Returns:
-        pd.DataFrame: Enhanced dataframe with lift metrics and top track info.
-    """
-    df = album_df.copy()
-
-    # --- Lift metrics (listeners) ---
-    df["top_to_mean_track_listeners"] = df["track_max_listeners"] / df["track_mean_listeners"]
-    df["top_to_median_track_listeners"] = df["track_max_listeners"] / df["track_median_listeners"]
-
-    # --- Lift metrics (playcount) ---
-    df["top_to_mean_track_playcount"] = df["track_max_playcount"] / df["track_mean_playcount"]
-    df["top_to_median_track_playcount"] = df["track_max_playcount"] / df["track_median_playcount"]
-
-    # Replace inf / bad values
-    for col in [
-        "top_to_mean_track_listeners",
-        "top_to_median_track_listeners",
-        "top_to_mean_track_playcount",
-        "top_to_median_track_playcount",
-    ]:
-        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
-
-    return df
-
-def attach_top_track_identity(
-    album_df: pd.DataFrame,
-    track_df: pd.DataFrame,
-    metric_key: str,
+def add_track_album_display_fields(
+    explorer_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Attach top track title and position to each album using the selected metric.
+    Add grouped display fields used by Page 21 for coloring and filtering.
 
     Args:
-        album_df: Album-level dataframe.
-        track_df: Original track-level dataframe.
-        metric_key: Selected comparison metric ("listeners" or "playcount").
+        explorer_df: One-row-per-album relationship dataframe.
 
     Returns:
-        pd.DataFrame: Album dataframe with top track identity.
+        pd.DataFrame: Copy with grouped display fields added.
     """
-    keys = ["release_group_mbid", "tmdb_id"]
+    df = add_standard_multivalue_groups(explorer_df)
+    df = add_film_year_bucket(df)
 
-    if metric_key == "listeners":
-        track_metric_col = "lfm_track_listeners"
-        raw_col_name = "top_track_listeners_raw"
-    else:
-        track_metric_col = "lfm_track_playcount"
-        raw_col_name = "top_track_playcount_raw"
-
-    top_tracks = (
-        track_df.sort_values(
-            keys + [track_metric_col, "track_number"],
-            ascending=[True, True, False, True],
+    if "composer_primary_clean" in df.columns:
+        df["composer_primary_clean"] = (
+            df["composer_primary_clean"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
         )
-        .drop_duplicates(subset=keys, keep="first")
-        [[
-            "release_group_mbid",
-            "tmdb_id",
-            "track_title",
-            "track_number",
-            track_metric_col,
-        ]]
-        .rename(columns={
-            "track_title": "top_track_title",
-            "track_number": "top_track_number",
-            track_metric_col: raw_col_name,
-        })
-    )
 
-    return album_df.merge(top_tracks, on=keys, how="left")
+    if "label_names" in df.columns:
+        df["label_names"] = (
+            df["label_names"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+    return df
 
 def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
     """
     Return tooltip fields for the active color encoding.
+
+    Args:
+        color_mode: Selected Page 21 color mode.
+
+    Returns:
+        list[alt.Tooltip]: Extra tooltip fields for the current color mode.
     """
     if color_mode == "Dominance Bucket":
         return [
@@ -435,6 +139,7 @@ def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
                 title="Dominance Bucket",
             )
         ]
+
     if color_mode == "Album Genre":
         return [
             alt.Tooltip(
@@ -442,6 +147,7 @@ def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
                 title="Album Genre Group",
             )
         ]
+
     if color_mode == "Film Genre":
         return [
             alt.Tooltip(
@@ -449,6 +155,7 @@ def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
                 title="Film Genre Group",
             )
         ]
+
     if color_mode == "Film Year":
         return [
             alt.Tooltip(
@@ -457,6 +164,7 @@ def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
                 format=",.0f",
             )
         ]
+
     return []
 
 def create_hero_scatter(
@@ -688,6 +396,7 @@ def create_scaling_scatter(
     )
 
 def build_track_album_scope_caption(
+    global_controls: dict,
     controls: dict,
     plot_df: pd.DataFrame,
     metric_label: str,
@@ -698,7 +407,8 @@ def build_track_album_scope_caption(
     Build a short caption describing the current Track–Album analysis scope.
 
     Args:
-        controls: Sidebar control selections.
+        global_controls: Shared global filter selections.
+        controls: Page-specific control selections.
         plot_df: Already filtered one-row-per-album dataframe.
         metric_label: Display label for the selected comparison metric.
         y_agg_label: Display label for the selected track aggregation.
@@ -717,18 +427,18 @@ def build_track_album_scope_caption(
     if controls.get("use_log_scale"):
         parts.append("log scale on")
 
-    year_range = controls.get("year_range")
+    year_range = global_controls.get("year_range")
     if year_range:
         parts.append(f"film years {year_range[0]}–{year_range[1]}")
 
-    if controls.get("selected_album_genres"):
+    if global_controls.get("selected_album_genres"):
         parts.append(
-            f"album genres: {', '.join(controls['selected_album_genres'])}"
+            f"album genres: {', '.join(global_controls['selected_album_genres'])}"
         )
 
-    if controls.get("selected_film_genres"):
+    if global_controls.get("selected_film_genres"):
         parts.append(
-            f"film genres: {', '.join(controls['selected_film_genres'])}"
+            f"film genres: {', '.join(global_controls['selected_film_genres'])}"
         )
 
     if controls.get("selected_composers"):
@@ -1107,6 +817,36 @@ def build_top3_mode_caption(
         "multi-track strength rather than dependence on a single breakout track."
     )
 
+def filter_track_album_relationship_df(
+    explorer_df: pd.DataFrame,
+    global_controls: dict,
+    controls: dict,
+) -> pd.DataFrame:
+    """
+    Apply shared global filters plus Page 21-specific composer/label filters.
+
+    Args:
+        explorer_df: Relationship dataframe.
+        global_controls: Shared global filter values.
+        controls: Page-specific control values.
+
+    Returns:
+        pd.DataFrame: Filtered relationship dataframe.
+    """
+    plot_df = filter_dataset(explorer_df, global_controls).copy()
+
+    if controls["selected_composers"]:
+        plot_df = plot_df[
+            plot_df["composer_primary_clean"].isin(controls["selected_composers"])
+        ].copy()
+
+    if controls["selected_labels"]:
+        plot_df = plot_df[
+            plot_df["label_names"].fillna("").isin(controls["selected_labels"])
+        ].copy()
+
+    return plot_df
+
 def main() -> None:
     """Render the Track–Album Relationship Explorer page."""
     st.set_page_config(
@@ -1125,43 +865,32 @@ def main() -> None:
         """
     )
 
-    # Base one-row-per-album relationship dataset.
-    explorer_df = build_track_album_relationship_df()
+    # Load the prebuilt Page 21 dataset and add shared display/group fields.
+    explorer_df = load_track_album_relationship_data()
+    explorer_df = add_track_album_display_fields(explorer_df)
 
-    # Add lift metrics such as top track vs mean/median track.
-    explorer_df = build_track_album_relationship_enhanced_df(explorer_df)
-
-    # Attach the identity of the top track for the selected metric.
-    _, wide_df = load_source_data()
-    year_min = int(explorer_df["film_year"].dropna().min())
-    year_max = int(explorer_df["film_year"].dropna().max())
-
-    album_genre_options = sorted(
-        [
-            label
-            for label, col in ALBUM_FILTER_FLAG_MAP.items()
-            if col in explorer_df.columns and explorer_df[col].fillna(0).sum() > 0
-        ]
-    )
-    film_genre_options = sorted(
-        [
-            label
-            for label, col in FILM_FILTER_FLAG_MAP.items()
-            if col in explorer_df.columns and explorer_df[col].fillna(0).sum() > 0
-        ]
-    )
-    composer_options = sorted(
-        explorer_df["composer_primary_clean"].dropna().astype(str).unique().tolist()
-    )
+    # Shared global filter inputs.
+    filter_inputs = get_global_filter_inputs(explorer_df)
+    composer_options = get_clean_composer_options(explorer_df)
     label_options = sorted(
-        explorer_df["label_names"].dropna().astype(str).unique().tolist()
+        explorer_df["label_names"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    global_controls = get_global_filter_controls(
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
     )
 
     controls = get_track_album_relationship_controls(
-        min_year=year_min,
-        max_year=year_max,
-        album_genre_options=album_genre_options,
-        film_genre_options=film_genre_options,
         composer_options=composer_options,
         label_options=label_options,
     )
@@ -1169,12 +898,6 @@ def main() -> None:
     metric_key = controls["comparison_metric"]
     y_agg_key = controls["track_aggregation"]
     dominance_metric_key = controls["dominance_metric"]
-
-    explorer_df = attach_top_track_identity(
-        album_df=explorer_df,
-        track_df=wide_df,
-        metric_key=metric_key,
-    )
 
     fields = METRIC_FIELD_MAP[metric_key]
     album_col = fields["album"]
@@ -1187,11 +910,6 @@ def main() -> None:
 
     color_mode = controls["color_mode"]
     use_log_scale = controls["use_log_scale"]
-    selected_years = controls["year_range"]
-    selected_album_genres = controls["selected_album_genres"]
-    selected_film_genres = controls["selected_film_genres"]
-    selected_composers = controls["selected_composers"]
-    selected_labels = controls["selected_labels"]
     show_table = controls["show_data_table"]
 
     y_agg_label = TRACK_AGG_LABELS[y_agg_key]
@@ -1203,12 +921,16 @@ def main() -> None:
         mean_track_col = "track_mean_listeners"
         median_track_col = "track_median_listeners"
         top_track_raw_col = "top_track_listeners_raw"
+        top_track_title_col = "top_track_title_listeners"
+        top_track_number_col = "top_track_number_listeners"
     else:
         lift_col = "top_to_mean_track_playcount"
         lift_vs_median_col = "top_to_median_track_playcount"
         mean_track_col = "track_mean_playcount"
         median_track_col = "track_median_playcount"
         top_track_raw_col = "top_track_playcount_raw"
+        top_track_title_col = "top_track_title_playcount"
+        top_track_number_col = "top_track_number_playcount"
 
     if dominance_metric_key == "top_to_total":
         st.info(
@@ -1230,47 +952,14 @@ def main() -> None:
     if top3_caption:
         st.caption(top3_caption)
 
-    plot_df = explorer_df.copy()
+    # Apply shared filters plus page-level composer/label filters.
+    plot_df = filter_track_album_relationship_df(
+        explorer_df=explorer_df,
+        global_controls=global_controls,
+        controls=controls,
+    )
 
-    plot_df = plot_df[
-        (plot_df["film_year"].fillna(year_min) >= selected_years[0])
-        & (plot_df["film_year"].fillna(year_max) <= selected_years[1])
-    ].copy()
-
-    if selected_album_genres:
-        selected_album_flags = [
-            ALBUM_FILTER_FLAG_MAP[label]
-            for label in selected_album_genres
-            if label in ALBUM_FILTER_FLAG_MAP
-            and ALBUM_FILTER_FLAG_MAP[label] in plot_df.columns
-        ]
-        if selected_album_flags:
-            plot_df = plot_df[
-                plot_df[selected_album_flags].fillna(0).sum(axis=1) > 0
-            ].copy()
-
-    if selected_film_genres:
-        selected_film_flags = [
-            FILM_FILTER_FLAG_MAP[label]
-            for label in selected_film_genres
-            if label in FILM_FILTER_FLAG_MAP
-            and FILM_FILTER_FLAG_MAP[label] in plot_df.columns
-        ]
-        if selected_film_flags:
-            plot_df = plot_df[
-                plot_df[selected_film_flags].fillna(0).sum(axis=1) > 0
-            ].copy()
-
-    if selected_composers:
-        plot_df = plot_df[
-            plot_df["composer_primary_clean"].isin(selected_composers)
-        ].copy()
-
-    if selected_labels:
-        plot_df = plot_df[
-            plot_df["label_names"].fillna("").isin(selected_labels)
-        ].copy()
-
+    # Apply page-specific validity filters for the selected metrics.
     plot_df = plot_df.dropna(
         subset=[album_col, y_col, dominance_col, dominance_bucket_col]
     ).copy()
@@ -1280,6 +969,15 @@ def main() -> None:
             (plot_df[album_col] > 0) & (plot_df[y_col] > 0)
         ].copy()
 
+    if dominance_metric_key == "top_to_album":
+        st.caption(
+            "Very small album-level denominators are excluded in this view to avoid unstable top track / album ratios."
+        )
+
+    # Guardrail for unstable album-based dominance ratios.
+    # Small album-level denominators can create extreme, hard-to-read values.
+    if dominance_metric_key == "top_to_album":
+        plot_df = plot_df[plot_df[album_col] >= 100].copy()
     if plot_df.empty:
         st.warning("No rows remain after applying the current filters.")
         return
@@ -1292,6 +990,7 @@ def main() -> None:
 
     st.caption(
         build_track_album_scope_caption(
+            global_controls=global_controls,
             controls=controls,
             plot_df=plot_df,
             metric_label=metric_label,
@@ -1416,7 +1115,10 @@ def main() -> None:
     st.subheader("Most Extreme Standout Tracks")
     outlier_df = (
         plot_df.dropna(subset=[lift_col])
-        .sort_values([lift_col, "film_title", "album_title"], ascending=[False, True, True])
+        .sort_values(
+            [lift_col, "film_title", "album_title"],
+            ascending=[False, True, True],
+        )
         .head(20)
         .copy()
     )
@@ -1428,13 +1130,14 @@ def main() -> None:
             f"Albums whose top track most strongly outperforms the soundtrack's mean track {metric_label.lower()}."
         )
 
-        outlier_display_cols = [
-            col for col in [
+        outlier_display_cols = select_unique_existing_columns(
+            outlier_df,
+            [
                 "film_title",
                 "album_title",
                 "composer_primary_clean",
-                "top_track_title",
-                "top_track_number",
+                top_track_title_col,
+                top_track_number_col,
                 top_track_raw_col,
                 mean_track_col,
                 median_track_col,
@@ -1443,24 +1146,12 @@ def main() -> None:
                 "n_tracks",
                 dominance_col,
                 "dominance_bucket_for_display",
-            ]
-            if col in outlier_df.columns
-        ]
+            ],
+        )
 
-        outlier_table_df = rename_columns_for_display(
+        outlier_table_df = rename_and_dedupe_for_display(
             outlier_df[outlier_display_cols]
-        ).copy()
-
-        deduped_cols = []
-        seen_display = {}
-        for col in outlier_table_df.columns:
-            if col not in seen_display:
-                seen_display[col] = 1
-                deduped_cols.append(col)
-            else:
-                seen_display[col] += 1
-                deduped_cols.append(f"{col} ({seen_display[col]})")
-        outlier_table_df.columns = deduped_cols
+        )
 
         st.dataframe(
             outlier_table_df,
@@ -1471,7 +1162,8 @@ def main() -> None:
         top_outlier = outlier_df.iloc[0]
         st.caption(
             f"Most extreme visible standout track: {top_outlier['film_title']} — "
-            f"{top_outlier['album_title']} / '{top_outlier.get('top_track_title', 'Unknown track')}' "
+            f"{top_outlier['album_title']} / "
+            f"'{top_outlier.get(top_track_title_col, 'Unknown track')}' "
             f"(top vs mean = {float(top_outlier[lift_col]):.2f}x)."
         )
 
@@ -1480,7 +1172,9 @@ def main() -> None:
             "film_title",
             "album_title",
             "composer_primary_clean",
+            "label_names",
             "film_year",
+            "film_year_bucket",
             "album_genre_group",
             "film_genre_group",
             "n_tracks",
@@ -1489,31 +1183,15 @@ def main() -> None:
             top_to_album_col,
             dominance_col,
             dominance_bucket_col,
-            "top_track_title",
-            "top_track_number",
+            top_track_title_col,
+            top_track_number_col,
+            top_track_raw_col,
             lift_col,
             lift_vs_median_col,
         ]
 
-        table_cols = []
-        seen = set()
-        for col in preferred_cols:
-            if col in plot_df.columns and col not in seen:
-                table_cols.append(col)
-                seen.add(col)
-
-        table_df = rename_columns_for_display(plot_df[table_cols]).copy()
-
-        deduped_cols = []
-        seen_display = {}
-        for col in table_df.columns:
-            if col not in seen_display:
-                seen_display[col] = 1
-                deduped_cols.append(col)
-            else:
-                seen_display[col] += 1
-                deduped_cols.append(f"{col} ({seen_display[col]})")
-        table_df.columns = deduped_cols
+        table_cols = select_unique_existing_columns(plot_df, preferred_cols)
+        table_df = rename_and_dedupe_for_display(plot_df[table_cols])
 
         st.subheader("Source Data")
         st.dataframe(

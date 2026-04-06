@@ -1297,21 +1297,20 @@ def get_track_structure_controls(
 
 # Page 21 Controls
 def get_track_album_relationship_controls(
-    min_year: int,
-    max_year: int,
-    album_genre_options: list[str],
-    film_genre_options: list[str],
     composer_options: list[str],
     label_options: list[str],
 ) -> dict:
     """
     Render sidebar controls for the Track–Album Relationship Explorer.
 
+    Shared global filters (year + film genres + album genres) should be
+    collected separately through get_global_filter_controls(...). This
+    function only owns Page 21-specific controls plus the optional
+    composer/label restrictions that are commonly useful on track pages.
+
     Args:
-        min_year: Minimum film year available in the filtered data.
-        max_year: Maximum film year available in the filtered data.
-        album_genre_options: Available album genre group labels.
-        film_genre_options: Available film genre group labels.
+        composer_options: Available composer values.
+        label_options: Available label values.
 
     Returns:
         dict: Selected control values.
@@ -1339,9 +1338,7 @@ def get_track_album_relationship_controls(
             "median": "Median track",
             "top3": "Top 3 sum",
         }[x],
-        help=(
-            "Choose how track performance should be summarized at the album level."
-        ),
+        help="Choose how track performance should be summarized at the album level.",
     )
 
     dominance_metric = st.sidebar.selectbox(
@@ -1352,7 +1349,7 @@ def get_track_album_relationship_controls(
             "top_to_album": "Top track / Album",
             "top_to_total": "Top track / Total track",
         }[x],
-        help="Choose how track dominance should be measured in the distribution, scaling, and dominance coloring views.",
+        help="Choose how track dominance should be measured.",
     )
 
     color_mode = st.sidebar.selectbox(
@@ -1373,27 +1370,7 @@ def get_track_album_relationship_controls(
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Filters")
-
-    year_range = st.sidebar.slider(
-        "Film year range",
-        min_value=min_year,
-        max_value=max_year,
-        value=(min_year, max_year),
-        step=1,
-    )
-
-    selected_album_genres = st.sidebar.multiselect(
-        "Album genres",
-        options=album_genre_options,
-        default=[],
-    )
-
-    selected_film_genres = st.sidebar.multiselect(
-        "Film genres",
-        options=film_genre_options,
-        default=[],
-    )
+    st.sidebar.subheader("Entity Filters")
 
     selected_composers = st.sidebar.multiselect(
         "Composers",
@@ -1420,10 +1397,266 @@ def get_track_album_relationship_controls(
         "dominance_metric": dominance_metric,
         "color_mode": color_mode,
         "use_log_scale": use_log_scale,
-        "year_range": year_range,
-        "selected_album_genres": selected_album_genres,
-        "selected_film_genres": selected_film_genres,
         "selected_composers": selected_composers,
         "selected_labels": selected_labels,
         "show_data_table": show_data_table,
+    }
+
+# Page 22 Controls
+def get_track_cohesion_controls(
+    composer_options: list[str],
+    metric_specs: dict[str, dict],
+    album_outcome_options: dict[str, str],
+    color_options: dict[str, str | None],
+) -> dict:
+    """
+    Render sidebar controls for the Track Cohesion Explorer.
+
+    Args:
+        composer_options: Available composer values.
+        metric_specs: Metric metadata registry for cohesion metrics.
+        album_outcome_options: Mapping of album outcome labels to columns.
+        color_options: Mapping of color labels to columns.
+
+    Returns:
+        dict: Selected page controls.
+    """
+    st.sidebar.header("Track Cohesion Controls")
+
+    metric_labels = sorted(
+        metric_specs.keys(),
+        key=lambda x: metric_specs[x]["default_rank"],
+    )
+
+    cohesion_metric_label = st.sidebar.selectbox(
+        "Cohesion metric",
+        options=metric_labels,
+        index=0,
+        help=(
+            "Choose which within-album cohesion dimension to compare "
+            "against popularity and dominance."
+        ),
+    )
+
+    album_outcome_label = st.sidebar.selectbox(
+        "Album outcome",
+        options=list(album_outcome_options.keys()),
+        index=0,
+        help="Choose the album-level success metric for the popularity chart.",
+    )
+
+    color_label = st.sidebar.selectbox(
+        "Color by",
+        options=list(color_options.keys()),
+        index=0,
+    )
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+        help="Optionally restrict the page to a selected composer subset.",
+    )
+
+    use_log_scale = st.sidebar.checkbox(
+        "Log-scale album outcome",
+        value=True,
+        help="Apply log10 scaling to the album outcome chart.",
+    )
+
+    min_tracks = st.sidebar.slider(
+        "Minimum tracks per album",
+        min_value=1,
+        max_value=20,
+        value=3,
+        step=1,
+        help="Hide albums with too few observed tracks for stable cohesion estimates.",
+    )
+
+    show_strength_chart = st.sidebar.checkbox(
+        "Show metric strength comparison",
+        value=True,
+    )
+
+    show_binned_view = st.sidebar.checkbox(
+        "Show low / medium / high bins",
+        value=True,
+    )
+
+    show_table = st.sidebar.checkbox(
+        "Show source table",
+        value=False,
+    )
+
+    return {
+        "cohesion_metric_label": cohesion_metric_label,
+        "cohesion_metric_col": metric_specs[cohesion_metric_label]["col"],
+        "cohesion_metric_family": metric_specs[cohesion_metric_label]["family"],
+        "cohesion_metric_short_label": metric_specs[cohesion_metric_label]["short_label"],
+        "cohesion_metric_description": metric_specs[cohesion_metric_label]["description"],
+        "album_outcome_label": album_outcome_label,
+        "album_outcome_col": album_outcome_options[album_outcome_label],
+        "color_label": color_label,
+        "color_col": color_options[color_label],
+        "selected_composers": selected_composers,
+        "use_log_scale": use_log_scale,
+        "min_tracks": min_tracks,
+        "show_strength_chart": show_strength_chart,
+        "show_binned_view": show_binned_view,
+        "show_table": show_table,
+    }
+
+# Page 30 controls
+def get_track_data_explorer_controls(
+    metric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Data Explorer.
+
+    Args:
+        metric_options: Track-level numeric metrics eligible for the main
+            metric panel.
+        group_options: Grouping fields eligible for grouped distributions.
+        group_value_options_map: Mapping from grouping field to selectable
+            group values.
+        composer_options: Available composer values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Data Explorer Controls")
+
+    metric = st.sidebar.selectbox(
+        "Track metric",
+        options=metric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    non_log_safe_metrics = {
+        "loudness",
+        "relative_track_position",
+        "track_number",
+        "key",
+        "mode",
+        "camelot_number",
+        "camelot_mode",
+    }
+
+    log_is_allowed = metric not in non_log_safe_metrics
+
+    use_log = st.sidebar.checkbox(
+        "Log scale (log10)",
+        value=(metric in {"lfm_track_listeners", "lfm_track_playcount"} and log_is_allowed),
+        disabled=not log_is_allowed,
+        help=(
+            "Apply log10 to positive-valued metrics."
+            if log_is_allowed
+            else "Log scale is disabled for this metric because it includes non-positive, bounded, or already-log-like values."
+        ),
+    )
+    if not log_is_allowed:
+        st.sidebar.caption(
+            f"Log scale is unavailable for {get_display_label(metric)}."
+        )
+
+    group_var = st.sidebar.selectbox(
+        "Group by",
+        options=["None"] + group_options,
+        index=0,
+        format_func=lambda x: "None" if x == "None" else get_display_label(x),
+    )
+
+    selected_groups = []
+    top_n = None
+
+    if group_var != "None":
+        selected_groups = st.sidebar.multiselect(
+            f"Select {get_display_label(group_var)} values",
+            options=group_value_options_map.get(group_var, []),
+            default=[],
+            help=(
+                "Type to search specific values. Leave blank to use the top N "
+                "groups by track count."
+            ),
+        )
+
+        if not selected_groups:
+            top_n = st.sidebar.slider(
+                "Top N groups to display",
+                min_value=3,
+                max_value=15,
+                value=8,
+                step=1,
+            )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Track Filters")
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+        help=(
+            "Case-insensitive text search across album title, film title, "
+            "composer, and label."
+        ),
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+        help="Restrict analysis to earlier track positions if desired.",
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+        help="Exclude tracks from albums below this listener threshold.",
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with any audio features",
+        value=False,
+    )
+
+    bins = st.sidebar.slider(
+        "Histogram bins",
+        min_value=20,
+        max_value=100,
+        value=40,
+        step=5,
+    )
+
+    show_data_table = st.sidebar.checkbox(
+        "Show source data table",
+        value=True,
+    )
+
+    return {
+        "metric": metric,
+        "use_log": use_log,
+        "group_var": group_var,
+        "selected_groups": selected_groups,
+        "top_n": top_n,
+        "selected_composers": selected_composers,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+        "bins": bins,
+        "show_data_table": show_data_table,
+        "search_text": search_text,
     }
