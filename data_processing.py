@@ -8,6 +8,7 @@ entry point so the code is easier to test, reuse, and maintain.
 """
 import re
 import unicodedata
+import numpy as np
 import pandas as pd
 
 FILM_IDS = ["tmdb_id"]
@@ -78,6 +79,8 @@ LABEL_CANONICAL_MAP = {
     "universal music classics": "Universal",
     "universal records": "Universal",
 }
+
+
 
 def load_input_data(
     album_file_path:str,
@@ -646,8 +649,8 @@ def _prepare_track_base(
     Build a cleaned one-row-per-track base dataframe from the wide dataset.
 
     The goal is to keep the track explorer at true track grain while
-    standardizing core track fields needed for later positional charts and
-    album-level cohesion rollups.
+    standardizing core track fields needed for later positional charts,
+    album-level cohesion rollups, and audio-feature analysis.
 
     Args:
         wide_df: Wide-format source dataframe containing track-level rows.
@@ -666,6 +669,21 @@ def _prepare_track_base(
         "spotify_popularity",
         "log_lfm_track_listeners",
         "log_lfm_track_playcount",
+        # RapidAPI audio fields
+        "key",
+        "mode",
+        "camelot",
+        "tempo",
+        "duration",
+        "popularity",
+        "energy",
+        "danceability",
+        "happiness",
+        "acousticness",
+        "instrumentalness",
+        "liveness",
+        "speechiness",
+        "loudness",
     ]
 
     existing_cols = [col for col in track_cols if col in wide_df.columns]
@@ -733,13 +751,32 @@ def _add_track_structure_fields(
         track_df["track_number"] == track_df["max_track_number_observed"]
     )
 
+    # Existing normalized 0-1 position measure.
     track_df["track_position_pct"] = 0.0
-
     valid_denominator = track_df["max_track_number_observed"] > 1
     track_df.loc[valid_denominator, "track_position_pct"] = (
         (track_df.loc[valid_denominator, "track_number"] - 1)
         / (track_df.loc[valid_denominator, "max_track_number_observed"] - 1)
     )
+
+    # Alias with clearer semantics for later pages.
+    track_df["relative_track_position"] = track_df["track_position_pct"]
+
+    # Position from the end of the visible album.
+    track_df["reverse_track_position"] = (
+        track_df["max_track_number_observed"] - track_df["track_number"] + 1
+    )
+
+    # Simple reusable buckets for early-album structure.
+    track_df["is_first_three_tracks"] = track_df["track_number"] <= 3
+    track_df["is_first_five_tracks"] = track_df["track_number"] <= 5
+
+    # Relative bucket labels are handy for later exploratory/stat pages too.
+    track_df["track_position_bucket"] = pd.cut(
+        track_df["relative_track_position"],
+        bins=[-0.001, 0.25, 0.50, 0.75, 1.001],
+        labels=["Early", "Early-mid", "Late-mid", "Late"],
+    ).astype(str)
 
     return track_df
 
@@ -808,6 +845,549 @@ def build_track_explorer_dataset(
         track_df = track_df.sort_values(sort_cols).reset_index(drop=True)
 
     return track_df
+
+TRACK_AUDIO_FEATURE_COLS = [
+    "spotify_popularity",
+    "key",
+    "mode",
+    "tempo",
+    "energy",
+    "danceability",
+    "acousticness",
+    "instrumentalness",
+    "liveness",
+    "speechiness",
+    "loudness",
+]
+
+BOUNDED_0_1_AUDIO_COLS = [
+    "energy",
+    "danceability",
+    "acousticness",
+    "instrumentalness",
+    "liveness",
+    "speechiness",
+]
+
+OPTIONAL_TRACK_AUDIO_COLS = [
+    "valence",
+]
+
+
+def _parse_duration_to_seconds(value: object) -> float:
+    """
+    Parse a mixed-format duration field into seconds.
+
+    Supports:
+    - mm:ss strings such as '3:00'
+    - numeric minute-like values less than 20, which are interpreted as minutes
+    - numeric second-like values >= 20, which are treated as already being seconds
+
+    Args:
+        value: Raw duration value.
+
+    Returns:
+        float: Duration in seconds, or NaN when parsing fails.
+    """
+    if pd.isna(value):
+        return np.nan
+
+    if isinstance(value, str):
+        text = value.strip()
+        if ":" in text:
+            parts = text.split(":")
+            if len(parts) == 2:
+                try:
+                    minutes = float(parts[0])
+                    seconds = float(parts[1])
+                    return minutes * 60 + seconds
+                except ValueError:
+                    return np.nan
+        try:
+            numeric_val = float(text)
+        except ValueError:
+            return np.nan
+    else:
+        try:
+            numeric_val = float(value)
+        except (TypeError, ValueError):
+            return np.nan
+
+    if numeric_val < 0:
+        return np.nan
+
+    # Heuristic: small decimal values in this field are likely minutes.
+    if numeric_val < 20:
+        return numeric_val * 60
+
+    return numeric_val
+
+
+def _parse_loudness_db(value: object) -> float:
+    """
+    Parse loudness strings like '-23 dB' into numeric dB values.
+
+    Args:
+        value: Raw loudness value.
+
+    Returns:
+        float: Loudness as a float, or NaN when parsing fails.
+    """
+    if pd.isna(value):
+        return np.nan
+
+    text = str(value).strip().replace(" dB", "").replace("db", "")
+    try:
+        return float(text)
+    except ValueError:
+        return np.nan
+
+
+def _parse_camelot_number(value: object) -> float:
+    """
+    Extract the numeric component from a Camelot code like '10B' or '8A'.
+
+    Args:
+        value: Raw Camelot value.
+
+    Returns:
+        float: Camelot number, or NaN when parsing fails.
+    """
+    if pd.isna(value):
+        return np.nan
+
+    text = str(value).strip().upper()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return np.nan
+
+    try:
+        return float(digits)
+    except ValueError:
+        return np.nan
+
+
+def _parse_camelot_mode(value: object) -> float:
+    """
+    Extract the mode component from a Camelot code.
+
+    A -> minor -> 0
+    B -> major -> 1
+
+    Args:
+        value: Raw Camelot value.
+
+    Returns:
+        float: 0 for minor, 1 for major, or NaN when parsing fails.
+    """
+    if pd.isna(value):
+        return np.nan
+
+    text = str(value).strip().upper()
+    if text.endswith("A"):
+        return 0.0
+    if text.endswith("B"):
+        return 1.0
+    return np.nan
+
+
+def clean_track_audio_features(
+    track_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Clean and standardize track-level RapidAPI audio feature columns.
+
+    This dataset uses mixed formats:
+    - note names for key (e.g. 'D', 'Bb', 'C#')
+    - text labels for mode ('major', 'minor')
+    - Camelot codes (e.g. '10B', '8A')
+    - duration strings like '3:00'
+    - loudness strings like '-23 dB'
+    - bounded perceptual features stored on a 0–100 scale
+
+    Cleaning rules:
+    - convert key note names to integers in [0, 11]
+    - convert mode to binary (major=1, minor=0)
+    - keep camelot as a cleaned string and derive helper numeric fields
+    - convert duration to duration_seconds
+    - parse loudness text into numeric dB
+    - scale bounded perceptual features from 0–100 to 0–1
+    - coerce tempo and both popularity fields to numeric
+    - add convenience flags for later pages
+
+    Args:
+        track_df: Track-level dataframe.
+
+    Returns:
+        pd.DataFrame: Copy of the dataframe with cleaned audio columns and
+        convenience helper fields added.
+    """
+    track_df = track_df.copy()
+
+    key_map = {
+        "C": 0,
+        "C#": 1,
+        "DB": 1,
+        "D": 2,
+        "D#": 3,
+        "EB": 3,
+        "E": 4,
+        "F": 5,
+        "F#": 6,
+        "GB": 6,
+        "G": 7,
+        "G#": 8,
+        "AB": 8,
+        "A": 9,
+        "A#": 10,
+        "BB": 10,
+        "B": 11,
+    }
+
+    if "key" in track_df.columns:
+        track_df["key_label"] = track_df["key"].astype("string")
+        track_df["key"] = (
+            track_df["key"]
+            .astype("string")
+            .str.strip()
+            .str.upper()
+            .map(key_map)
+        )
+
+    if "mode" in track_df.columns:
+        track_df["mode_label"] = track_df["mode"].astype("string")
+        track_df["mode"] = (
+            track_df["mode"]
+            .astype("string")
+            .str.strip()
+            .str.lower()
+            .map({"major": 1.0, "minor": 0.0})
+        )
+
+    if "camelot" in track_df.columns:
+        track_df["camelot"] = (
+            track_df["camelot"].astype("string").str.strip().str.upper()
+        )
+        track_df["camelot_number"] = track_df["camelot"].apply(_parse_camelot_number)
+        track_df["camelot_mode"] = track_df["camelot"].apply(_parse_camelot_mode)
+
+    if "duration" in track_df.columns:
+        track_df["duration_seconds"] = track_df["duration"].apply(
+            _parse_duration_to_seconds
+        )
+
+    if "loudness" in track_df.columns:
+        track_df["loudness"] = track_df["loudness"].apply(_parse_loudness_db)
+
+    for col in ["tempo", "popularity", "spotify_popularity"]:
+        if col in track_df.columns:
+            track_df[col] = pd.to_numeric(track_df[col], errors="coerce")
+
+    if "spotify_popularity" in track_df.columns:
+        track_df["spotify_popularity"] = track_df["spotify_popularity"].where(
+            track_df["spotify_popularity"].between(0, 100),
+            np.nan,
+        )
+
+    if "popularity" in track_df.columns:
+        track_df["popularity"] = track_df["popularity"].where(
+            track_df["popularity"].between(0, 100),
+            np.nan,
+        )
+
+    if "tempo" in track_df.columns:
+        track_df["tempo"] = track_df["tempo"].where(
+            track_df["tempo"] > 0,
+            np.nan,
+        )
+
+    bounded_100_cols = [
+        col for col in [
+            "energy",
+            "danceability",
+            "happiness",
+            "acousticness",
+            "instrumentalness",
+            "liveness",
+            "speechiness",
+        ]
+        if col in track_df.columns
+    ]
+
+    for col in bounded_100_cols:
+        track_df[col] = pd.to_numeric(track_df[col], errors="coerce")
+        track_df[col] = (track_df[col] / 100.0).clip(lower=0, upper=1)
+
+    if "instrumentalness" in track_df.columns:
+        track_df["is_instrumental"] = (
+            track_df["instrumentalness"] >= 0.7
+        ).astype("float")
+
+    if "energy" in track_df.columns:
+        track_df["is_high_energy"] = (
+            track_df["energy"] >= 0.6
+        ).astype("float")
+
+    if "happiness" in track_df.columns:
+        track_df["is_high_happiness"] = (
+            track_df["happiness"] >= 0.6
+        ).astype("float")
+
+    if "mode" in track_df.columns:
+        track_df["is_major_mode"] = track_df["mode"]
+
+    return track_df
+
+
+def _entropy_from_series(series: pd.Series) -> float:
+    """
+    Compute Shannon entropy for a discrete series.
+
+    Args:
+        series: Discrete-valued series with possible nulls.
+
+    Returns:
+        float: Entropy in nats, or NaN when no non-null values are present.
+    """
+    values = series.dropna()
+    if values.empty:
+        return np.nan
+
+    probs = values.value_counts(normalize=True)
+    return float(-(probs * np.log(probs)).sum())
+
+def safe_ratio(
+    numerator: pd.Series,
+    denominator: pd.Series,
+) -> pd.Series:
+    """
+    Compute a safe ratio that returns NaN when the denominator is missing or <= 0.
+
+    Args:
+        numerator: Numerator series.
+        denominator: Denominator series.
+
+    Returns:
+        pd.Series: Ratio with invalid divisions replaced by NaN.
+    """
+    out = numerator / denominator
+    out = out.where(denominator > 0)
+    return out.replace([np.inf, -np.inf], np.nan)
+
+def build_track_audio_cohesion_dataset(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a one-row-per-album dataset for track-audio cohesion analysis.
+
+    This is intended for Page 22 and future track-audio pages. It joins
+    track-level audio dispersion metrics back to a compact album-level frame
+    that also contains album popularity and top-track dominance measures.
+
+    Args:
+        albums_df: Album-level source dataframe.
+        wide_df: Wide-format source dataframe containing track-level rows.
+
+    Returns:
+        pd.DataFrame: Album-level dataframe with audio cohesion metrics.
+    """
+    album_metadata_df = _get_track_album_metadata(albums_df, wide_df).copy()
+    track_df = _prepare_track_base(wide_df)
+    track_df = clean_track_audio_features(track_df)
+
+    audio_cols = [
+        col for col in [
+            "spotify_popularity",
+            "popularity",
+            "tempo",
+            "duration_seconds",
+            "energy",
+            "danceability",
+            "happiness",
+            "acousticness",
+            "instrumentalness",
+            "liveness",
+            "speechiness",
+            "loudness",
+            "key",
+            "mode",
+            "camelot_number",
+            "camelot_mode",
+            "is_instrumental",
+            "is_high_energy",
+            "is_high_happiness",
+        ]
+        if col in track_df.columns
+    ]
+
+    base_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "track_number",
+        "track_title",
+        "lfm_track_listeners",
+        "lfm_track_playcount",
+        *audio_cols,
+    ]
+    track_df = track_df[[col for col in base_cols if col in track_df.columns]].copy()
+
+    group_keys = ["release_group_mbid", "tmdb_id"]
+
+    agg_spec: dict[str, object] = {
+        "lfm_track_listeners": ["max", "mean", "median", "sum"],
+        "lfm_track_playcount": ["max", "mean", "median", "sum"],
+    }
+
+    for col in [
+        "spotify_popularity",
+        "popularity",
+        "tempo",
+        "duration_seconds",
+        "energy",
+        "danceability",
+        "happiness",
+        "acousticness",
+        "instrumentalness",
+        "liveness",
+        "speechiness",
+        "loudness",
+    ]:
+        if col in track_df.columns:
+            agg_spec[col] = ["mean", "std", "min", "max"]
+
+    if "is_instrumental" in track_df.columns:
+        agg_spec["is_instrumental"] = ["mean"]
+
+    if "is_high_energy" in track_df.columns:
+        agg_spec["is_high_energy"] = ["mean"]
+
+    if "is_high_happiness" in track_df.columns:
+        agg_spec["is_high_happiness"] = ["mean"]
+
+    cohesion_df = track_df.groupby(group_keys, dropna=False).agg(agg_spec)
+    cohesion_df.columns = [
+        "_".join([part for part in col if part]).strip("_")
+        if isinstance(col, tuple) else col
+        for col in cohesion_df.columns.to_flat_index()
+    ]
+    cohesion_df = cohesion_df.reset_index()
+
+    if "key" in track_df.columns:
+        key_entropy_df = (
+            track_df.groupby(group_keys, dropna=False)["key"]
+            .apply(_entropy_from_series)
+            .reset_index(name="key_entropy")
+        )
+        cohesion_df = cohesion_df.merge(
+            key_entropy_df,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    if "mode" in track_df.columns:
+        mode_entropy_df = (
+            track_df.groupby(group_keys, dropna=False)["mode"]
+            .apply(_entropy_from_series)
+            .reset_index(name="mode_entropy")
+        )
+        cohesion_df = cohesion_df.merge(
+            mode_entropy_df,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    rename_map = {
+        "lfm_track_listeners_max": "track_max_listeners",
+        "lfm_track_listeners_mean": "track_mean_listeners",
+        "lfm_track_listeners_median": "track_median_listeners",
+        "lfm_track_listeners_sum": "track_total_listeners",
+        "lfm_track_playcount_max": "track_max_playcount",
+        "lfm_track_playcount_mean": "track_mean_playcount",
+        "lfm_track_playcount_median": "track_median_playcount",
+        "lfm_track_playcount_sum": "track_total_playcount",
+        "tempo_std": "tempo_variance_proxy_std",
+        "tempo_min": "tempo_min",
+        "tempo_max": "tempo_max",
+        "energy_std": "energy_variance_proxy_std",
+        "danceability_std": "danceability_variance_proxy_std",
+        "happiness_std": "happiness_variance_proxy_std",
+        "acousticness_std": "acousticness_variance_proxy_std",
+        "instrumentalness_std": "instrumentalness_variance_proxy_std",
+        "liveness_std": "liveness_variance_proxy_std",
+        "speechiness_std": "speechiness_variance_proxy_std",
+        "loudness_std": "loudness_variance_proxy_std",
+        "duration_seconds_std": "duration_variance_proxy_std",
+        "is_instrumental_mean": "pct_instrumental_tracks",
+        "is_high_energy_mean": "pct_high_energy_tracks",
+        "is_high_happiness_mean": "pct_high_happiness_tracks",
+    }
+    existing_renames = {
+        old: new for old, new in rename_map.items()
+        if old in cohesion_df.columns
+    }
+    cohesion_df = cohesion_df.rename(columns=existing_renames)
+
+    if "tempo_max" in cohesion_df.columns and "tempo_min" in cohesion_df.columns:
+        cohesion_df["tempo_range"] = (
+            cohesion_df["tempo_max"] - cohesion_df["tempo_min"]
+        )
+
+    if (
+        ("lfm_album_listeners" not in album_metadata_df.columns)
+        and ("lfm_album_listeners" in albums_df.columns)
+    ):
+        album_metric_slice = albums_df[
+            ["release_group_mbid", "tmdb_id", "lfm_album_listeners", "lfm_album_playcount"]
+        ].drop_duplicates()
+        album_metadata_df = album_metadata_df.merge(
+            album_metric_slice,
+            on=group_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    cohesion_df = cohesion_df.merge(
+        album_metadata_df,
+        on=group_keys,
+        how="left",
+        validate="1:1",
+    )
+
+    if "track_max_listeners" in cohesion_df.columns and "lfm_album_listeners" in cohesion_df.columns:
+        cohesion_df["top_to_album_listeners"] = safe_ratio(
+            cohesion_df["track_max_listeners"],
+            cohesion_df["lfm_album_listeners"],
+        )
+
+    if "track_max_listeners" in cohesion_df.columns and "track_total_listeners" in cohesion_df.columns:
+        cohesion_df["top_to_total_listeners"] = safe_ratio(
+            cohesion_df["track_max_listeners"],
+            cohesion_df["track_total_listeners"],
+        )
+
+    if "track_max_playcount" in cohesion_df.columns and "lfm_album_playcount" in cohesion_df.columns:
+        cohesion_df["top_to_album_playcount"] = safe_ratio(
+            cohesion_df["track_max_playcount"],
+            cohesion_df["lfm_album_playcount"],
+        )
+
+    if "track_max_playcount" in cohesion_df.columns and "track_total_playcount" in cohesion_df.columns:
+        cohesion_df["top_to_total_playcount"] = safe_ratio(
+            cohesion_df["track_max_playcount"],
+            cohesion_df["track_total_playcount"],
+        )
+
+    sort_cols = [
+        col for col in ["film_title", "album_title", "release_group_mbid", "tmdb_id"]
+        if col in cohesion_df.columns
+    ]
+    if sort_cols:
+        cohesion_df = cohesion_df.sort_values(sort_cols).reset_index(drop=True)
+
+    return cohesion_df
 
 def inspect_genre_columns(albums_df: pd.DataFrame) -> None:
     """

@@ -19,7 +19,10 @@ from app.ui import (
     get_display_label,
     rename_columns_for_display,
 )
-
+from app.explorer_shared import (
+    derive_multi_label_group_from_flags,
+    get_global_filter_inputs,
+)
 
 PREFERRED_NUMERIC_COLS = [
     "lfm_album_listeners",
@@ -113,52 +116,18 @@ PREFERRED_GROUP_COLS = [
     "critics_song_nominee",
 ]
 
-
-def derive_multi_label_group(
-    df: pd.DataFrame,
-    flag_cols: list[str],
-    label_map: dict[str, str],
-    output_col: str,
-) -> pd.DataFrame:
-    """
-    Collapse multi-label genre flags into a single grouping column.
-
-    Rules:
-        - one positive flag -> that genre label
-        - multiple positive flags -> "Multi-genre"
-        - no positive flags -> "Unknown"
-    """
-    out_df = df.copy()
-    available_cols = [col for col in flag_cols if col in out_df.columns]
-
-    if not available_cols:
-        out_df[output_col] = "Unknown"
-        return out_df
-
-    def assign_group(row: pd.Series) -> str:
-        active_cols = [col for col in available_cols if row[col] == 1]
-        if len(active_cols) == 1:
-            return label_map[active_cols[0]]
-        if len(active_cols) > 1:
-            return "Multi-genre"
-        return "Unknown"
-
-    out_df[output_col] = out_df[available_cols].apply(assign_group, axis=1)
-    return out_df
-
-
 def build_group_comparison_df(explorer_df: pd.DataFrame) -> pd.DataFrame:
     """
     Add derived grouping fields used by the Group Comparison Explorer.
     """
-    out_df = derive_multi_label_group(
+    out_df = derive_multi_label_group_from_flags(
         df=explorer_df,
         flag_cols=ALBUM_GENRE_FLAG_COLS,
         label_map=GENRE_LABEL_MAP,
         output_col="album_genre_group",
     )
 
-    out_df = derive_multi_label_group(
+    out_df = derive_multi_label_group_from_flags(
         df=out_df,
         flag_cols=FILM_GENRE_FLAG_COLS,
         label_map=GENRE_LABEL_MAP,
@@ -1507,18 +1476,13 @@ def main() -> None:
 
     explorer_df = load_explorer_data()
 
-    year_series = explorer_df["film_year"].dropna().astype(int)
-    min_year = int(year_series.min())
-    max_year = int(year_series.max())
-
-    film_genre_options = split_multivalue_genres(explorer_df["film_genres"])
-    album_genre_options = split_multivalue_genres(explorer_df["album_genres_display"])
+    filter_inputs = get_global_filter_inputs(explorer_df)
 
     global_filters = get_global_filter_controls(
-        min_year=min_year,
-        max_year=max_year,
-        film_genre_options=film_genre_options,
-        album_genre_options=album_genre_options,
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
     )
 
     filtered_df = filter_dataset(explorer_df, global_filters)

@@ -12,7 +12,10 @@ from app.app_controls import (
 from app.app_data import load_track_explorer_data
 from app.data_filters import filter_dataset, split_multivalue_genres
 from app.ui import get_display_label
-
+from app.explorer_shared import (
+    get_clean_composer_options,
+    get_global_filter_inputs,
+)
 
 TRACK_METRIC_OPTIONS = [
     "lfm_track_listeners",
@@ -93,6 +96,77 @@ def add_display_metric(
 
     return track_df
 
+def add_metric_structure_fields(
+    track_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Add metric-specific within-album structure fields based on metric_raw.
+
+    Args:
+        track_df: Filtered track dataframe with metric_raw already added.
+
+    Returns:
+        pd.DataFrame: Track dataframe with within-album helper fields added.
+    """
+    track_df = track_df.copy()
+
+    album_keys = ["release_group_mbid", "tmdb_id"]
+    grouped = track_df.groupby(album_keys)["metric_raw"]
+
+    track_df["album_metric_total"] = grouped.transform("sum")
+    track_df["album_metric_mean"] = grouped.transform("mean")
+    track_df["album_metric_median"] = grouped.transform("median")
+
+    track_df["track_share"] = np.where(
+        track_df["album_metric_total"] > 0,
+        track_df["metric_raw"] / track_df["album_metric_total"],
+        np.nan,
+    )
+
+    track_df["track_rank_within_album"] = grouped.rank(
+        method="dense",
+        ascending=False,
+    )
+
+    track_df["is_top_track"] = track_df["track_rank_within_album"] == 1
+
+    return track_df
+
+def add_analysis_basis_fields(
+    track_df: pd.DataFrame,
+    analysis_basis: str,
+    transform_y: str,
+) -> pd.DataFrame:
+    """
+    Add active plotted metric columns based on the selected analysis basis.
+
+    Args:
+        track_df: Track dataframe with metric_raw, metric_display, and
+            track_share already available.
+        analysis_basis: Selected analysis basis.
+        transform_y: Display transform option.
+
+    Returns:
+        pd.DataFrame: Track dataframe with active display columns added.
+    """
+    track_df = track_df.copy()
+
+    if analysis_basis == "Within-album share":
+        track_df["analysis_value_raw"] = track_df["track_share"]
+        track_df["analysis_value_display"] = track_df["track_share"]
+    else:
+        track_df["analysis_value_raw"] = track_df["metric_raw"]
+        track_df["analysis_value_display"] = track_df["metric_display"]
+
+    # Keep share untransformed for interpretability.
+    if analysis_basis == "Raw metric" and transform_y == "Log1p":
+        analysis_label_suffix = " (log1p)"
+    else:
+        analysis_label_suffix = ""
+
+    track_df["analysis_label_suffix"] = analysis_label_suffix
+
+    return track_df
 
 def add_scatter_x_position(
     track_df: pd.DataFrame,
@@ -142,17 +216,89 @@ def build_position_summary_df(
     summary_df = (
         track_df.groupby("track_number", as_index=False)
         .agg(
-            n_tracks=("metric_display", "size"),
-            mean_value=("metric_display", "mean"),
-            median_value=("metric_display", "median"),
-            q25_value=("metric_display", lambda x: x.quantile(0.25)),
-            q75_value=("metric_display", lambda x: x.quantile(0.75)),
+            n_tracks=("analysis_value_display", "size"),
+            mean_value=("analysis_value_display", "mean"),
+            median_value=("analysis_value_display", "median"),
+            q25_value=("analysis_value_display", lambda x: x.quantile(0.25)),
+            q75_value=("analysis_value_display", lambda x: x.quantile(0.75)),
         )
         .sort_values("track_number")
         .reset_index(drop=True)
     )
 
     return summary_df
+
+def build_top_track_position_df(
+    track_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a summary of where the strongest visible track occurs.
+
+    Probability is computed as:
+    top-track count at a position / number of visible albums that have that
+    position available.
+
+    Args:
+        track_df: Filtered track dataframe with metric_raw and is_top_track.
+
+    Returns:
+        pd.DataFrame: Summary dataframe by track position.
+    """
+    album_keys = ["release_group_mbid", "tmdb_id"]
+
+    top_track_df = (
+        track_df.sort_values(
+            album_keys + ["metric_raw", "track_number"],
+            ascending=[True, True, False, True],
+        )
+        .drop_duplicates(subset=album_keys, keep="first")
+        .copy()
+    )
+
+    top_counts_df = (
+        top_track_df.groupby("track_number", as_index=False)
+        .agg(top_track_count=("track_number", "size"))
+    )
+
+    eligible_rows = []
+    max_position = int(track_df["track_number"].max())
+
+    album_max_df = (
+        track_df[album_keys + ["max_track_number_observed"]]
+        .drop_duplicates()
+        .copy()
+    )
+
+    for pos in range(1, max_position + 1):
+        eligible_count = int(
+            (album_max_df["max_track_number_observed"] >= pos).sum()
+        )
+        eligible_rows.append(
+            {
+                "track_number": pos,
+                "eligible_album_count": eligible_count,
+            }
+        )
+
+    eligible_df = pd.DataFrame(eligible_rows)
+
+    position_df = eligible_df.merge(
+        top_counts_df,
+        on="track_number",
+        how="left",
+    )
+
+    position_df["top_track_count"] = (
+        position_df["top_track_count"].fillna(0).astype(int)
+    )
+
+    position_df["top_track_probability"] = np.where(
+        position_df["eligible_album_count"] > 0,
+        position_df["top_track_count"] / position_df["eligible_album_count"],
+        np.nan,
+    )
+
+    return position_df
 
 def plot_track_position_summary(
     summary_df: pd.DataFrame,
@@ -216,6 +362,46 @@ def plot_track_position_summary(
 
     return alt.layer(*layers).properties(height=380)
 
+def plot_top_track_position_chart(
+    position_df: pd.DataFrame,
+) -> alt.Chart:
+    """
+    Plot the probability that the strongest visible track occurs at each
+    track position.
+
+    Args:
+        position_df: Top-track position summary dataframe.
+
+    Returns:
+        alt.Chart: Altair bar + line chart.
+    """
+    base = alt.Chart(position_df)
+
+    bars = base.mark_bar(opacity=0.75).encode(
+        x=alt.X("track_number:Q", title="Track position"),
+        y=alt.Y(
+            "top_track_probability:Q",
+            title="Probability strongest track occurs here",
+            axis=alt.Axis(format="%"),
+        ),
+        tooltip=[
+            alt.Tooltip("track_number:Q", title="Track position"),
+            alt.Tooltip("top_track_count:Q", title="Top-track albums"),
+            alt.Tooltip("eligible_album_count:Q", title="Eligible albums"),
+            alt.Tooltip(
+                "top_track_probability:Q",
+                title="Probability",
+                format=".1%",
+            ),
+        ],
+    )
+
+    line = base.mark_line(point=True).encode(
+        x="track_number:Q",
+        y=alt.Y("top_track_probability:Q", axis=alt.Axis(format="%")),
+    )
+
+    return (bars + line).properties(height=320)
 
 def plot_track_position_scatter(
     track_df: pd.DataFrame,
@@ -240,8 +426,9 @@ def plot_track_position_scatter(
         alt.Tooltip("album_title:N", title="Album"),
         alt.Tooltip("track_title:N", title="Track"),
         alt.Tooltip("track_number:Q", title="Track position"),
-        alt.Tooltip("metric_raw:Q", title=f"{metric_label} (raw)", format=".2f"),
-        alt.Tooltip("metric_display:Q", title="Displayed Y value", format=".2f"),
+        alt.Tooltip("metric_raw:Q", title="Selected metric (raw)", format=".2f"),
+        alt.Tooltip("track_share:Q", title="Track share", format=".3f"),
+        alt.Tooltip("analysis_value_display:Q", title=metric_label, format=".3f"),
         alt.Tooltip("track_count_observed:Q", title="Observed tracks"),
     ]
 
@@ -258,24 +445,24 @@ def plot_track_position_scatter(
     if color_col != "None":
         points = base.mark_circle(opacity=0.45, size=45).encode(
             x=alt.X("track_number_plot:Q", title="Track position"),
-            y=alt.Y("metric_display:Q", title=metric_label),
+            y=alt.Y("analysis_value_display:Q", title=metric_label),
             color=alt.Color(f"{color_col}:N", title=get_display_label(color_col)),
             tooltip=tooltip_cols,
         )
     else:
         points = base.mark_circle(opacity=0.45, size=45).encode(
             x=alt.X("track_number_plot:Q", title="Track position"),
-            y=alt.Y("metric_display:Q", title=metric_label),
+            y=alt.Y("analysis_value_display:Q", title=metric_label),
             tooltip=tooltip_cols,
         )
 
     if show_trendline:
         trend = base.transform_regression(
             "track_number",
-            "metric_display",
+            "analysis_value_display",
         ).mark_line().encode(
             x="track_number:Q",
-            y="metric_display:Q",
+            y="analysis_value_display:Q",
         )
         return (points + trend).properties(height=380)
 
@@ -332,6 +519,29 @@ def build_album_cohesion_df(
         np.nan,
     )
 
+    first_three_df = (
+        track_df[track_df["track_number"] <= 3]
+        .groupby(["release_group_mbid", "tmdb_id"], as_index=False)
+        .agg(first_three_track_value=("metric_raw", "sum"))
+    )
+
+    cohesion_df = cohesion_df.merge(
+        first_three_df,
+        on=["release_group_mbid", "tmdb_id"],
+        how="left",
+        validate="1:1",
+    )
+
+    cohesion_df["first_three_track_value"] = (
+        cohesion_df["first_three_track_value"].fillna(0)
+    )
+
+    cohesion_df["first_three_share"] = np.where(
+        cohesion_df["total_track_metric"] > 0,
+        cohesion_df["first_three_track_value"] / cohesion_df["total_track_metric"],
+        np.nan,
+    )
+
     top_track_rows = (
         track_df.sort_values(
             [
@@ -345,20 +555,20 @@ def build_album_cohesion_df(
         .drop_duplicates(
             subset=["release_group_mbid", "tmdb_id"],
             keep="first",
-        )[
-            [
-                "release_group_mbid",
-                "tmdb_id",
-                "track_title",
-                "track_number",
-                "metric_raw",
-            ]
-        ]
+        )[[
+            "release_group_mbid",
+            "tmdb_id",
+            "track_title",
+            "track_number",
+            "metric_raw",
+            "track_share",
+        ]]
         .rename(
             columns={
                 "track_title": "top_track_title",
                 "track_number": "top_track_position",
                 "metric_raw": "top_track_value_detail",
+                "track_share": "top_track_share_detail",
             }
         )
         .copy()
@@ -416,6 +626,11 @@ def plot_album_cohesion_ranking(
             alt.Tooltip("top_track_position:Q", title="Top track position"),
             alt.Tooltip("track_count_observed:Q", title="Observed tracks"),
             alt.Tooltip("top_track_share:Q", title="Top track share", format=".3f"),
+            alt.Tooltip(
+                "first_three_share:Q",
+                title="First 3 track share",
+                format=".3f",
+            ),
             alt.Tooltip(
                 "top_track_to_median_ratio:Q",
                 title="Top/median ratio",
@@ -527,14 +742,15 @@ def plot_album_drilldown(
     """
     chart = alt.Chart(drilldown_df).mark_bar().encode(
         x=alt.X("track_number:Q", title="Track position"),
-        y=alt.Y("metric_display:Q", title=metric_label),
+        y=alt.Y("analysis_value_display:Q", title=metric_label),
         tooltip=[
             alt.Tooltip("film_title:N", title="Film"),
             alt.Tooltip("album_title:N", title="Album"),
             alt.Tooltip("track_title:N", title="Track"),
             alt.Tooltip("track_number:Q", title="Track position"),
-            alt.Tooltip("metric_raw:Q", title=f"{metric_label} (raw)", format=".2f"),
-            alt.Tooltip("metric_display:Q", title="Displayed Y value", format=".2f"),
+            alt.Tooltip("metric_raw:Q", title="Selected metric (raw)", format=".2f"),
+            alt.Tooltip("track_share:Q", title="Track share", format=".3f"),
+            alt.Tooltip("analysis_value_display:Q", title=metric_label, format=".3f"),
             alt.Tooltip("track_count_observed:Q", title="Observed tracks"),
         ],
     ).properties(
@@ -583,32 +799,54 @@ def build_track_structure_scope_caption(
 
     return "Current scope: " + "; ".join(parts) + "."
 
-
 def build_track_structure_insight_summary(
     summary_df: pd.DataFrame,
     cohesion_ranked_df: pd.DataFrame,
     track_controls: dict,
+    filtered_tracks: pd.DataFrame,
 ) -> dict[str, str]:
     """
     Build reactive top-row insight cards for the Track Structure Explorer.
 
+    This helper keeps the top-row metrics aligned with the current visible
+    scope of the page. The cards summarize three complementary ideas:
+
+    1. Strongest visible track position
+       Uses the currently selected summary statistic (median by default,
+       or mean if chosen) to identify which track number performs best
+       across the visible filtered set.
+
+    2. Front-loading
+       Summarizes how much of an album's visible performance is captured
+       by its first three tracks. This is computed album by album using
+       track_share, then summarized across the visible albums using the
+       median to reduce sensitivity to outliers.
+
+    3. Cohesion leader
+       Identifies the top visible album under the currently selected
+       cohesion ranking metric.
+
     Args:
-        summary_df: Track-position summary dataframe.
+        summary_df: Track-position summary dataframe used by the main
+            position chart.
         cohesion_ranked_df: Visible ranked cohesion dataframe after sorting
             and Top-N truncation.
         track_controls: Page control values.
+        filtered_tracks: Filtered track dataframe with track_share already
+            added.
 
     Returns:
-        dict[str, str]: Titles, values, and captions for three insight cards.
+        dict[str, str]: Titles, values, and captions for the three insight
+        cards rendered at the top of the page.
     """
     if summary_df.empty:
         return {
             "card1_title": "Strongest Visible Position",
             "card1_value": "None",
             "card1_caption": "No track-position summary is available.",
-            "card2_title": "Position Trend",
+            "card2_title": "Front-loading",
             "card2_value": "None",
-            "card2_caption": "No endpoint comparison is available.",
+            "card2_caption": "No front-loading summary is available.",
             "card3_title": "Cohesion Leader",
             "card3_value": "None",
             "card3_caption": "No cohesion ranking is available.",
@@ -626,33 +864,33 @@ def build_track_structure_insight_summary(
         ascending=[False, True],
     ).iloc[0]
 
-    first_row = summary_df.sort_values("track_number").iloc[0]
-    last_row = summary_df.sort_values("track_number").iloc[-1]
+    frontload_base_df = filtered_tracks.copy()
+    frontload_base_df["first_three_track_share_component"] = np.where(
+        frontload_base_df["track_number"] <= 3,
+        frontload_base_df["track_share"],
+        0.0,
+    )
 
-    first_value = float(first_row[stat_col])
-    last_value = float(last_row[stat_col])
-    delta = last_value - first_value
+    album_frontload_df = (
+        frontload_base_df.groupby(
+            ["release_group_mbid", "tmdb_id"],
+            as_index=False,
+        )
+        .agg(
+            total_share=("track_share", "sum"),
+            first_three_share=("first_three_track_share_component", "sum"),
+        )
+    )
 
-    if delta <= -0.05:
-        trend_value = "Front-loaded"
-        trend_caption = (
-            f"Visible {stat_label} performance declines from track "
-            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
-            f"{int(last_row['track_number'])} ({last_value:.2f})."
-        )
-    elif delta >= 0.05:
-        trend_value = "Back-loaded"
-        trend_caption = (
-            f"Visible {stat_label} performance rises from track "
-            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
-            f"{int(last_row['track_number'])} ({last_value:.2f})."
-        )
+    if album_frontload_df.empty:
+        frontload_value = "None"
+        frontload_caption = "No front-loading summary is available."
     else:
-        trend_value = "Mostly flat"
-        trend_caption = (
-            f"Visible {stat_label} performance is fairly stable from track "
-            f"{int(first_row['track_number'])} ({first_value:.2f}) to track "
-            f"{int(last_row['track_number'])} ({last_value:.2f})."
+        median_frontload = float(album_frontload_df["first_three_share"].median())
+        frontload_value = f"{median_frontload:.1%}"
+        frontload_caption = (
+            "Across visible albums, the median share captured by the first 3 tracks "
+            f"is {median_frontload:.1%}."
         )
 
     if cohesion_ranked_df.empty:
@@ -675,25 +913,27 @@ def build_track_structure_insight_summary(
         f"{stat_label} value at {float(strongest_row[stat_col]):.2f}."
     )
     if track_controls["summary_stat"] == "Both":
-        strongest_caption += " With Both selected, this card keys off the median line."
+        strongest_caption += (
+            " With Both selected, this card keys off the median line."
+        )
 
     return {
         "card1_title": "Strongest Visible Position",
         "card1_value": f"Track {int(strongest_row['track_number'])}",
         "card1_caption": strongest_caption,
-        "card2_title": "Position Trend",
-        "card2_value": trend_value,
-        "card2_caption": trend_caption,
+        "card2_title": "Front-loading",
+        "card2_value": frontload_value,
+        "card2_caption": frontload_caption,
         "card3_title": "Cohesion Leader",
         "card3_value": cohesion_value,
         "card3_caption": cohesion_caption,
     }
 
-
 def render_track_structure_insight_cards(
     summary_df: pd.DataFrame,
     cohesion_ranked_df: pd.DataFrame,
     track_controls: dict,
+    filtered_tracks: pd.DataFrame,
 ) -> None:
     """
     Render reactive insight cards for the Track Structure Explorer.
@@ -702,11 +942,14 @@ def render_track_structure_insight_cards(
         summary_df: Track-position summary dataframe.
         cohesion_ranked_df: Visible ranked cohesion dataframe.
         track_controls: Page control values.
+        filtered_tracks: Filtered track dataframe with track_share already
+            added.
     """
     insights = build_track_structure_insight_summary(
         summary_df=summary_df,
         cohesion_ranked_df=cohesion_ranked_df,
         track_controls=track_controls,
+        filtered_tracks=filtered_tracks,
     )
 
     st.markdown("### 🧠 Key Insights")
@@ -723,7 +966,6 @@ def render_track_structure_insight_cards(
     with col3:
         st.metric(insights["card3_title"], insights["card3_value"])
         st.caption(insights["card3_caption"])
-
 
 def build_position_supporting_insight(
     summary_df: pd.DataFrame,
@@ -777,6 +1019,34 @@ def build_position_supporting_insight(
         f"({float(weakest_row[stat_col]):.2f}).{sample_note}"
     )
 
+def build_top_track_position_insight(
+    position_df: pd.DataFrame,
+) -> str:
+    """
+    Build a short supporting insight for the top-track position chart.
+
+    Args:
+        position_df: Top-track position summary dataframe.
+
+    Returns:
+        str: Supporting sentence.
+    """
+    if position_df.empty:
+        return "No top-track position insight is available."
+
+    strongest_row = position_df.sort_values(
+        ["top_track_probability", "track_number"],
+        ascending=[False, True],
+    ).iloc[0]
+
+    return (
+        f"💡 Among albums that visibly include each position, track "
+        f"{int(strongest_row['track_number'])} is the most likely place for the "
+        f"strongest track to appear "
+        f"({float(strongest_row['top_track_probability']):.1%}; "
+        f"{int(strongest_row['top_track_count'])} of "
+        f"{int(strongest_row['eligible_album_count'])} eligible albums)."
+    )
 
 def build_scatter_supporting_insight(
     scatter_df: pd.DataFrame,
@@ -795,7 +1065,9 @@ def build_scatter_supporting_insight(
     if scatter_df.empty:
         return "No scatter insight is available."
 
-    corr = scatter_df["track_number"].corr(scatter_df["metric_display"])
+    corr = scatter_df["track_number"].corr(
+        scatter_df["analysis_value_display"]
+    )
     if pd.isna(corr):
         return (
             "The scatterplot shows the visible track-level spread directly, "
@@ -912,15 +1184,34 @@ def build_album_drilldown_caption(
         if total_metric > 0 else np.nan
     )
 
+    first_three_total = float(
+        drilldown_df.loc[
+            drilldown_df["track_number"] <= 3,
+            "metric_raw",
+        ].sum()
+    )
+    first_three_share = (
+        first_three_total / total_metric
+        if total_metric > 0 else np.nan
+    )
+
+    cohesion_note = ""
     if cohesion_metric == "top_track_share" and not pd.isna(top_share):
-        cohesion_note = f" Its top track accounts for {top_share:.1%} of the album's visible total."
-    else:
-        cohesion_note = ""
+        cohesion_note = (
+            f" Its top track accounts for {top_share:.1%} of the album's visible total."
+        )
+
+    frontload_note = ""
+    if not pd.isna(first_three_share):
+        frontload_note = (
+            f" The first 3 tracks account for {first_three_share:.1%} of the visible total."
+        )
 
     return (
         f"Top visible track for this soundtrack is '{top_row['track_title']}' "
         f"at position {int(top_row['track_number'])}, with a raw value of "
-        f"{float(top_row['metric_raw']):.2f}.{cohesion_note}"
+        f"{float(top_row['metric_raw']):.2f}."
+        f"{cohesion_note}{frontload_note}"
     )
 
 def main() -> None:
@@ -937,21 +1228,14 @@ def main() -> None:
 
     track_df = load_track_explorer_data()
 
-    min_year = int(track_df["film_year"].dropna().min())
-    max_year = int(track_df["film_year"].dropna().max())
-
-    film_genre_options = split_multivalue_genres(track_df["film_genres"])
-    album_genre_options = split_multivalue_genres(track_df["album_genres_display"])
-
-    composer_options = sorted(
-        track_df["composer_primary_clean"].dropna().unique().tolist()
-    )
+    filter_inputs = get_global_filter_inputs(track_df)
+    composer_options = get_clean_composer_options(track_df)
 
     global_controls = get_global_filter_controls(
-        min_year=min_year,
-        max_year=max_year,
-        film_genre_options=film_genre_options,
-        album_genre_options=album_genre_options,
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
     )
 
     track_controls = get_track_structure_controls(
@@ -986,6 +1270,16 @@ def main() -> None:
         )
         return
 
+    # Add within-album metric helpers tied to the selected raw metric.
+    filtered_tracks = add_metric_structure_fields(filtered_tracks)
+
+    # Add the active plotted metric based on the selected analysis basis.
+    filtered_tracks = add_analysis_basis_fields(
+        track_df=filtered_tracks,
+        analysis_basis=track_controls["analysis_basis"],
+        transform_y=track_controls["transform_y"],
+    )
+
     scatter_df = add_scatter_x_position(
         track_df=filtered_tracks,
         apply_jitter=track_controls["apply_jitter"],
@@ -993,6 +1287,8 @@ def main() -> None:
     )
 
     summary_df = build_position_summary_df(filtered_tracks)
+
+    top_track_position_df = build_top_track_position_df(filtered_tracks)
 
     cohesion_all_df = build_album_cohesion_df(filtered_tracks)
     cohesion_metric = track_controls["cohesion_metric"]
@@ -1008,7 +1304,9 @@ def main() -> None:
     album_options_df = build_album_drilldown_options(filtered_tracks)
 
     metric_label = get_display_label(track_controls["metric"])
-    if track_controls["transform_y"] == "Log1p":
+    if track_controls["analysis_basis"] == "Within-album share":
+        metric_label = "Track share of album total"
+    elif track_controls["transform_y"] == "Log1p":
         metric_label = f"{metric_label} (log1p)"
 
     st.caption(
@@ -1024,6 +1322,7 @@ def main() -> None:
         summary_df=summary_df,
         cohesion_ranked_df=cohesion_ranked_df,
         track_controls=track_controls,
+        filtered_tracks=filtered_tracks,
     )
 
     st.subheader("Popularity by Track Position")
@@ -1043,6 +1342,22 @@ def main() -> None:
         )
     )
 
+    st.subheader("Where the Strongest Track Appears")
+    st.markdown(
+        """
+        This view shows how often the strongest visible track in a soundtrack
+        occurs at each track position, adjusting for how many albums are long
+        enough to include that position.
+        """
+    )
+    st.altair_chart(
+        plot_top_track_position_chart(top_track_position_df),
+        use_container_width=True,
+    )
+    st.caption(
+        build_top_track_position_insight(top_track_position_df)
+    )
+
     if track_controls["show_summary_table"]:
         st.dataframe(summary_df, use_container_width=True)
 
@@ -1052,7 +1367,12 @@ def main() -> None:
         scatter_color_col = track_controls["color_col"]
 
     if track_controls["show_scatter"]:
-        st.subheader("Track Position vs Popularity")
+        if track_controls["analysis_basis"] == "Within-album share":
+            scatter_title = "Track Position vs Within-Album Share"
+        else:
+            scatter_title = "Track Position vs Performance"
+
+        st.subheader(scatter_title)
         st.altair_chart(
             plot_track_position_scatter(
                 track_df=scatter_df,
@@ -1139,6 +1459,10 @@ def main() -> None:
                     "track_title",
                     "metric_raw",
                     "metric_display",
+                    "analysis_value_display",
+                    "track_share",
+                    "track_rank_within_album",
+                    "is_top_track",
                     "track_count_observed",
                 ]
                 if col in drilldown_df.columns
@@ -1162,6 +1486,10 @@ def main() -> None:
                 "lfm_track_listeners",
                 "lfm_track_playcount",
                 "spotify_popularity",
+                "track_share",
+                "track_rank_within_album",
+                "is_top_track",
+                "relative_track_position",
             ]
             if col in filtered_tracks.columns
         ]
@@ -1169,7 +1497,6 @@ def main() -> None:
             filtered_tracks[display_cols],
             use_container_width=True,
         )
-
 
 if __name__ == "__main__":
     main()

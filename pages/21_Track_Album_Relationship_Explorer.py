@@ -346,6 +346,84 @@ def build_parity_line_df(plot_df: pd.DataFrame, x_col: str, y_col: str) -> pd.Da
         }
     )
 
+def build_track_album_relationship_enhanced_df(album_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add lift metrics and top-track identity fields to the Page 21 dataset.
+
+    Args:
+        album_df: Existing album-level dataframe with track aggregates.
+
+    Returns:
+        pd.DataFrame: Enhanced dataframe with lift metrics and top track info.
+    """
+    df = album_df.copy()
+
+    # --- Lift metrics (listeners) ---
+    df["top_to_mean_track_listeners"] = df["track_max_listeners"] / df["track_mean_listeners"]
+    df["top_to_median_track_listeners"] = df["track_max_listeners"] / df["track_median_listeners"]
+
+    # --- Lift metrics (playcount) ---
+    df["top_to_mean_track_playcount"] = df["track_max_playcount"] / df["track_mean_playcount"]
+    df["top_to_median_track_playcount"] = df["track_max_playcount"] / df["track_median_playcount"]
+
+    # Replace inf / bad values
+    for col in [
+        "top_to_mean_track_listeners",
+        "top_to_median_track_listeners",
+        "top_to_mean_track_playcount",
+        "top_to_median_track_playcount",
+    ]:
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+
+    return df
+
+def attach_top_track_identity(
+    album_df: pd.DataFrame,
+    track_df: pd.DataFrame,
+    metric_key: str,
+) -> pd.DataFrame:
+    """
+    Attach top track title and position to each album using the selected metric.
+
+    Args:
+        album_df: Album-level dataframe.
+        track_df: Original track-level dataframe.
+        metric_key: Selected comparison metric ("listeners" or "playcount").
+
+    Returns:
+        pd.DataFrame: Album dataframe with top track identity.
+    """
+    keys = ["release_group_mbid", "tmdb_id"]
+
+    if metric_key == "listeners":
+        track_metric_col = "lfm_track_listeners"
+        raw_col_name = "top_track_listeners_raw"
+    else:
+        track_metric_col = "lfm_track_playcount"
+        raw_col_name = "top_track_playcount_raw"
+
+    top_tracks = (
+        track_df.sort_values(
+            keys + [track_metric_col, "track_number"],
+            ascending=[True, True, False, True],
+        )
+        .drop_duplicates(subset=keys, keep="first")
+        [[
+            "release_group_mbid",
+            "tmdb_id",
+            "track_title",
+            "track_number",
+            track_metric_col,
+        ]]
+        .rename(columns={
+            "track_title": "top_track_title",
+            "track_number": "top_track_number",
+            track_metric_col: raw_col_name,
+        })
+    )
+
+    return album_df.merge(top_tracks, on=keys, how="left")
+
 def get_color_tooltip_fields(color_mode: str) -> list[alt.Tooltip]:
     """
     Return tooltip fields for the active color encoding.
@@ -1047,8 +1125,14 @@ def main() -> None:
         """
     )
 
+    # Base one-row-per-album relationship dataset.
     explorer_df = build_track_album_relationship_df()
 
+    # Add lift metrics such as top track vs mean/median track.
+    explorer_df = build_track_album_relationship_enhanced_df(explorer_df)
+
+    # Attach the identity of the top track for the selected metric.
+    _, wide_df = load_source_data()
     year_min = int(explorer_df["film_year"].dropna().min())
     year_max = int(explorer_df["film_year"].dropna().max())
 
@@ -1086,6 +1170,12 @@ def main() -> None:
     y_agg_key = controls["track_aggregation"]
     dominance_metric_key = controls["dominance_metric"]
 
+    explorer_df = attach_top_track_identity(
+        album_df=explorer_df,
+        track_df=wide_df,
+        metric_key=metric_key,
+    )
+
     fields = METRIC_FIELD_MAP[metric_key]
     album_col = fields["album"]
     y_col = fields[y_agg_key]
@@ -1106,6 +1196,19 @@ def main() -> None:
 
     y_agg_label = TRACK_AGG_LABELS[y_agg_key]
     dominance_label = get_dominance_label(dominance_metric_key, metric_label)
+
+    if metric_key == "listeners":
+        lift_col = "top_to_mean_track_listeners"
+        lift_vs_median_col = "top_to_median_track_listeners"
+        mean_track_col = "track_mean_listeners"
+        median_track_col = "track_median_listeners"
+        top_track_raw_col = "top_track_listeners_raw"
+    else:
+        lift_col = "top_to_mean_track_playcount"
+        lift_vs_median_col = "top_to_median_track_playcount"
+        mean_track_col = "track_mean_playcount"
+        median_track_col = "track_median_playcount"
+        top_track_raw_col = "top_track_playcount_raw"
 
     if dominance_metric_key == "top_to_total":
         st.info(
@@ -1310,6 +1413,68 @@ def main() -> None:
         )
     )
 
+    st.subheader("Most Extreme Standout Tracks")
+    outlier_df = (
+        plot_df.dropna(subset=[lift_col])
+        .sort_values([lift_col, "film_title", "album_title"], ascending=[False, True, True])
+        .head(20)
+        .copy()
+    )
+
+    if outlier_df.empty:
+        st.info("No standout-track outliers are available under the current filters.")
+    else:
+        st.caption(
+            f"Albums whose top track most strongly outperforms the soundtrack's mean track {metric_label.lower()}."
+        )
+
+        outlier_display_cols = [
+            col for col in [
+                "film_title",
+                "album_title",
+                "composer_primary_clean",
+                "top_track_title",
+                "top_track_number",
+                top_track_raw_col,
+                mean_track_col,
+                median_track_col,
+                lift_col,
+                lift_vs_median_col,
+                "n_tracks",
+                dominance_col,
+                "dominance_bucket_for_display",
+            ]
+            if col in outlier_df.columns
+        ]
+
+        outlier_table_df = rename_columns_for_display(
+            outlier_df[outlier_display_cols]
+        ).copy()
+
+        deduped_cols = []
+        seen_display = {}
+        for col in outlier_table_df.columns:
+            if col not in seen_display:
+                seen_display[col] = 1
+                deduped_cols.append(col)
+            else:
+                seen_display[col] += 1
+                deduped_cols.append(f"{col} ({seen_display[col]})")
+        outlier_table_df.columns = deduped_cols
+
+        st.dataframe(
+            outlier_table_df,
+            width="stretch",
+            hide_index=True,
+        )
+
+        top_outlier = outlier_df.iloc[0]
+        st.caption(
+            f"Most extreme visible standout track: {top_outlier['film_title']} — "
+            f"{top_outlier['album_title']} / '{top_outlier.get('top_track_title', 'Unknown track')}' "
+            f"(top vs mean = {float(top_outlier[lift_col]):.2f}x)."
+        )
+
     if show_table:
         preferred_cols = [
             "film_title",
@@ -1324,6 +1489,10 @@ def main() -> None:
             top_to_album_col,
             dominance_col,
             dominance_bucket_col,
+            "top_track_title",
+            "top_track_number",
+            lift_col,
+            lift_vs_median_col,
         ]
 
         table_cols = []

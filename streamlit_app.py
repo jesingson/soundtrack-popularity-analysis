@@ -59,6 +59,10 @@ navigation = st.navigation(
                 "pages/21_Track_Album_Relationship_Explorer.py",
                 title="Track–Album Relationship Explorer",
             ),
+            st.Page(
+                "pages/22_Track_Cohesion_Explorer.py",
+                title="Track Cohesion Explorer",
+            ),
         ],
     }
 )

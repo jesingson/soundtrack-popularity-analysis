@@ -1133,6 +1133,15 @@ def get_track_structure_controls(
         index=1,
         help="Apply log1p to positive values for display and summaries.",
     )
+    analysis_basis = st.sidebar.selectbox(
+        "Analysis basis",
+        options=["Raw metric", "Within-album share"],
+        index=0,
+        help=(
+            "Raw metric shows absolute track performance. "
+            "Within-album share shows each track's share of its album's visible total."
+        ),
+    )
 
     max_track_position = st.sidebar.slider(
         "Maximum track position",
@@ -1267,6 +1276,7 @@ def get_track_structure_controls(
     return {
         "metric": metric,
         "transform_y": transform_y,
+        "analysis_basis": analysis_basis,
         "max_track_position": max_track_position,
         "min_tracks_per_album": min_tracks_per_album,
         "selected_composers": selected_composers,

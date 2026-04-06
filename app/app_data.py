@@ -160,3 +160,25 @@ def load_ridge_dynamic_groups(
         y_col=y_col,
         top_n=top_n,
     )
+
+@st.cache_data
+def load_track_audio_cohesion_data(
+    album_file_path: str = "data/albums.csv",
+    wide_file_path: str = "data/wide.csv",
+) -> pd.DataFrame:
+    """
+    Load source CSVs and build the album-level track-audio cohesion dataset.
+
+    Args:
+        album_file_path: Path to the album-level CSV.
+        wide_file_path: Path to the wide-format CSV.
+
+    Returns:
+        pd.DataFrame: One-row-per-album dataframe with track-audio cohesion
+        metrics for bridge/exploratory pages.
+    """
+    albums_df, wide_df = load_source_data(
+        album_file_path=album_file_path,
+        wide_file_path=wide_file_path,
+    )
+    return dp.build_track_audio_cohesion_dataset(albums_df, wide_df)
