@@ -1507,61 +1507,113 @@ def get_track_cohesion_controls(
     }
 
 # Page 30 controls
-def get_track_data_explorer_controls(
-    metric_options: list[str],
-    group_options: list[str],
-    group_value_options_map: dict[str, list[str]],
+def get_track_dataset_explorer_controls(
     composer_options: list[str],
 ) -> dict:
     """
-    Render sidebar controls for the Track Data Explorer.
+    Render sidebar controls for the Track Dataset Explorer.
 
     Args:
-        metric_options: Track-level numeric metrics eligible for the main
-            metric panel.
-        group_options: Grouping fields eligible for grouped distributions.
-        group_value_options_map: Mapping from grouping field to selectable
-            group values.
         composer_options: Available composer values.
 
     Returns:
         dict: Selected control values.
     """
-    st.sidebar.header("Track Data Explorer Controls")
+    st.sidebar.header("Track Dataset Explorer Controls")
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with core audio features",
+        value=False,
+    )
+
+    show_data_table = st.sidebar.checkbox(
+        "Show source data table",
+        value=True,
+    )
+
+    return {
+        "selected_composers": selected_composers,
+        "search_text": search_text,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+        "show_data_table": show_data_table,
+    }
+
+# Page 31 Controls
+def get_track_distribution_controls(
+    metric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+) -> dict:
+    """
+    Render sidebar controls for the Track Distribution Explorer.
+
+    Args:
+        metric_options: Track-level numeric metrics eligible for distribution analysis.
+        group_options: Optional categorical grouping fields.
+        group_value_options_map: Mapping from grouping field to selectable values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Distribution Controls")
 
     metric = st.sidebar.selectbox(
-        "Track metric",
+        "Metric",
         options=metric_options,
         index=0,
         format_func=get_display_label,
     )
 
-    non_log_safe_metrics = {
-        "loudness",
-        "relative_track_position",
-        "track_number",
-        "key",
-        "mode",
-        "camelot_number",
-        "camelot_mode",
-    }
-
-    log_is_allowed = metric not in non_log_safe_metrics
+    view_type = st.sidebar.selectbox(
+        "View type",
+        options=["Histogram", "PDF", "CDF"],
+        index=0,
+    )
 
     use_log = st.sidebar.checkbox(
         "Log scale (log10)",
-        value=(metric in {"lfm_track_listeners", "lfm_track_playcount"} and log_is_allowed),
-        disabled=not log_is_allowed,
-        help=(
-            "Apply log10 to positive-valued metrics."
-            if log_is_allowed
-            else "Log scale is disabled for this metric because it includes non-positive, bounded, or already-log-like values."
-        ),
+        value=metric in {"lfm_track_listeners", "lfm_track_playcount"},
+        help="Applies log10 to positive values only.",
     )
-    if not log_is_allowed:
-        st.sidebar.caption(
-            f"Log scale is unavailable for {get_display_label(metric)}."
-        )
+
+    bins = st.sidebar.slider(
+        "Bins",
+        min_value=20,
+        max_value=100,
+        value=40,
+        step=5,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Optional Distribution Grouping")
 
     group_var = st.sidebar.selectbox(
         "Group by",
@@ -1570,8 +1622,8 @@ def get_track_data_explorer_controls(
         format_func=lambda x: "None" if x == "None" else get_display_label(x),
     )
 
-    selected_groups = []
-    top_n = None
+    selected_groups: list[str] = []
+    top_n_groups = None
 
     if group_var != "None":
         selected_groups = st.sidebar.multiselect(
@@ -1585,13 +1637,106 @@ def get_track_data_explorer_controls(
         )
 
         if not selected_groups:
-            top_n = st.sidebar.slider(
-                "Top N groups to display",
-                min_value=3,
-                max_value=15,
-                value=8,
+            top_n_groups = st.sidebar.slider(
+                "Top N groups",
+                min_value=2,
+                max_value=12,
+                value=6,
                 step=1,
             )
+
+    return {
+        "metric": metric,
+        "view_type": view_type,
+        "use_log": use_log,
+        "bins": bins,
+        "group_var": group_var,
+        "selected_groups": selected_groups,
+        "top_n_groups": top_n_groups,
+    }
+
+# Page 32 Controls
+def get_track_comparison_controls(
+    metric_options: list[str],
+    group_options: list[str],
+    group_value_options_map: dict[str, list[str]],
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Comparison Explorer.
+
+    Args:
+        metric_options: Track-level numeric metrics eligible for comparison.
+        group_options: Grouping fields eligible for comparison.
+        group_value_options_map: Mapping from grouping field to selectable values.
+        composer_options: Available composer values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Comparison Controls")
+
+    metric = st.sidebar.selectbox(
+        "Metric",
+        options=metric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    view_mode = st.sidebar.selectbox(
+        "View mode",
+        options=["Boxplot", "Violin", "Bar Ranking"],
+        index=0,
+    )
+
+    group_var = st.sidebar.selectbox(
+        "Group by",
+        options=group_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    selected_groups = st.sidebar.multiselect(
+        f"Select {get_display_label(group_var)} values",
+        options=group_value_options_map.get(group_var, []),
+        default=[],
+        help=(
+            "Type to search specific values. Leave blank to use the top N "
+            "groups by track count."
+        ),
+    )
+
+    top_n = None
+    if not selected_groups:
+        top_n = st.sidebar.slider(
+            "Top N groups to display",
+            min_value=3,
+            max_value=15,
+            value=8,
+            step=1,
+        )
+
+    min_group_size = st.sidebar.slider(
+        "Minimum tracks per group",
+        min_value=5,
+        max_value=100,
+        value=15,
+        step=5,
+    )
+
+    use_log = st.sidebar.checkbox(
+        "Log scale (log10)",
+        value=metric in {"lfm_track_listeners", "lfm_track_playcount"},
+        help="Applies log10 to positive values only.",
+    )
+
+    ranking_stat = None
+    if view_mode == "Bar Ranking":
+        ranking_stat = st.sidebar.selectbox(
+            "Ranking statistic",
+            options=["Median", "Mean", "Total", "Count"],
+            index=0,
+        )
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Track Filters")
@@ -1605,10 +1750,6 @@ def get_track_data_explorer_controls(
     search_text = st.sidebar.text_input(
         "Search track, album, film, composer, or label",
         value="",
-        help=(
-            "Case-insensitive text search across album title, film title, "
-            "composer, and label."
-        ),
     )
 
     max_track_position = st.sidebar.slider(
@@ -1617,7 +1758,6 @@ def get_track_data_explorer_controls(
         max_value=40,
         value=20,
         step=1,
-        help="Restrict analysis to earlier track positions if desired.",
     )
 
     min_album_listeners = st.sidebar.number_input(
@@ -1625,38 +1765,173 @@ def get_track_data_explorer_controls(
         min_value=0,
         value=0,
         step=100,
-        help="Exclude tracks from albums below this listener threshold.",
     )
 
     audio_only = st.sidebar.checkbox(
-        "Only tracks with any audio features",
+        "Only tracks with core audio features",
         value=False,
     )
 
-    bins = st.sidebar.slider(
-        "Histogram bins",
-        min_value=20,
-        max_value=100,
-        value=40,
-        step=5,
-    )
+    show_points = False
+    if view_mode in {"Boxplot", "Violin"}:
+        show_points = st.sidebar.checkbox(
+            "Show individual track points",
+            value=False,
+        )
 
-    show_data_table = st.sidebar.checkbox(
-        "Show source data table",
+    show_source_table = st.sidebar.checkbox(
+        "Show supporting table",
         value=True,
     )
 
     return {
         "metric": metric,
-        "use_log": use_log,
+        "view_mode": view_mode,
         "group_var": group_var,
         "selected_groups": selected_groups,
         "top_n": top_n,
+        "min_group_size": min_group_size,
+        "use_log": use_log,
+        "ranking_stat": ranking_stat,
         "selected_composers": selected_composers,
+        "search_text": search_text,
         "max_track_position": max_track_position,
         "min_album_listeners": min_album_listeners,
         "audio_only": audio_only,
-        "bins": bins,
-        "show_data_table": show_data_table,
+        "show_points": show_points,
+        "show_source_table": show_source_table,
+    }
+
+# Page 33 Controls
+def get_track_relationship_controls(
+    numeric_options: list[str],
+    color_options: list[str],
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Relationship Explorer.
+
+    Args:
+        numeric_options: Track-level numeric columns available for X/Y selection.
+        color_options: Optional categorical fields available for color encoding.
+        composer_options: Available composer values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Relationship Controls")
+
+    x_col = st.sidebar.selectbox(
+        "X-axis",
+        options=numeric_options,
+        index=0,
+        format_func=get_display_label,
+    )
+
+    default_y_index = 1 if len(numeric_options) > 1 else 0
+    y_col = st.sidebar.selectbox(
+        "Y-axis",
+        options=numeric_options,
+        index=default_y_index,
+        format_func=get_display_label,
+    )
+
+    color_col = st.sidebar.selectbox(
+        "Color grouping",
+        options=["None"] + color_options,
+        index=0,
+        format_func=lambda x: "None" if x == "None" else get_display_label(x),
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Display and scale controls")
+
+    transform_x = st.sidebar.selectbox(
+        "Transform X",
+        options=["None", "Log1p"],
+        index=0,
+    )
+
+    transform_y = st.sidebar.selectbox(
+        "Transform Y",
+        options=["None", "Log1p"],
+        index=0,
+    )
+
+    apply_jitter = st.sidebar.checkbox(
+        "Jitter points",
+        value=False,
+    )
+
+    if apply_jitter:
+        jitter_strength = st.sidebar.slider(
+            "Jitter strength",
+            min_value=0.000,
+            max_value=0.050,
+            value=0.008,
+            step=0.001,
+            format="%.3f",
+        )
+    else:
+        jitter_strength = 0.0
+
+    show_trendline = st.sidebar.checkbox(
+        "Show fitted line",
+        value=True,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Track Filters")
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with core audio features",
+        value=False,
+    )
+
+    show_data_table = st.sidebar.checkbox(
+        "Show scatterplot data table",
+        value=False,
+    )
+
+    return {
+        "x_col": x_col,
+        "y_col": y_col,
+        "color_col": color_col,
+        "transform_x": transform_x,
+        "transform_y": transform_y,
+        "apply_jitter": apply_jitter,
+        "jitter_strength": jitter_strength,
+        "show_trendline": show_trendline,
+        "selected_composers": selected_composers,
         "search_text": search_text,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+        "show_data_table": show_data_table,
     }

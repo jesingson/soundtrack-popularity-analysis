@@ -53,8 +53,20 @@ navigation = st.navigation(
         ],
         "🟩 Track Data Exploration": [
             st.Page(
-                "pages/30_Track_Data_Explorer.py",
-                title="Track Data Explorer",
+                "pages/30_Track_Dataset_Explorer.py",
+                title="Track Dataset Explorer",
+            ),
+            st.Page(
+                "pages/31_Track_Distribution_Explorer.py",
+                title="Track Distribution Explorer",
+            ),
+            st.Page(
+                "pages/32_Track_Comparison_Explorer.py",
+                title="Track Comparison Explorer",
+            ),
+            st.Page(
+                "pages/33_Track_Relationship_Explorer.py",
+                title="Track Relationship Explorer",
             ),
         ],
         "🟨 Album–Track Analysis": [

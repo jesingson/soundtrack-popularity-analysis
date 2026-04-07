@@ -1,10 +1,53 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from app.data_filters import split_multivalue_genres
 from app.ui import rename_columns_for_display
 
+TRACK_NUMERIC_PRIORITY = [
+    "lfm_track_listeners",
+    "lfm_track_playcount",
+    "track_share_of_album_listeners",
+    "track_share_of_album_playcount",
+    "spotify_popularity",
+    "track_number",
+    "relative_track_position",
+    "energy",
+    "danceability",
+    "happiness",
+    "instrumentalness",
+    "acousticness",
+    "liveness",
+    "speechiness",
+    "tempo",
+    "loudness",
+    "duration_seconds",
+]
+
+
+TRACK_GROUP_PRIORITY = [
+    "track_position_bucket",
+    "track_type",
+    "key_mode_label",
+    "mode_label",
+    "key_label",
+    "album_genre_group",
+    "film_genre_group",
+    "award_category",
+    "film_year_bucket",
+    "composer_primary_clean",
+]
+
+def get_track_numeric_options(df: pd.DataFrame) -> list[str]:
+    """Return track-level numeric options in preferred order."""
+    return [col for col in TRACK_NUMERIC_PRIORITY if col in df.columns]
+
+
+def get_track_group_options(df: pd.DataFrame) -> list[str]:
+    """Return track-level grouping options in preferred order."""
+    return [col for col in TRACK_GROUP_PRIORITY if col in df.columns]
 
 def derive_multi_label_group_from_flags(
     df: pd.DataFrame,
@@ -151,6 +194,47 @@ def add_film_year_bucket(
     out_df[output_col] = out_df[film_year_col].apply(bucket_year)
     return out_df
 
+def add_key_mode_label(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add a human-readable harmonic label combining key and mode.
+
+    Creates:
+        - key_mode_label: e.g. 'C major', 'F minor'
+    """
+    out = df.copy()
+
+    if "key_label" not in out.columns or "mode" not in out.columns:
+        out["key_mode_label"] = "Unknown"
+        return out
+
+    mode_map = {
+        1.0: "major",
+        0.0: "minor",
+        1: "major",
+        0: "minor",
+    }
+
+    mode_series = (
+        pd.to_numeric(out["mode"], errors="coerce")
+        .map(mode_map)
+        .fillna("unknown")
+    )
+
+    key_series = (
+        out["key_label"]
+        .fillna("Unknown")
+        .astype(str)
+        .str.strip()
+        .replace("", "Unknown")
+    )
+
+    out["key_mode_label"] = np.where(
+        (key_series != "Unknown") & (mode_series != "unknown"),
+        key_series + " " + mode_series,
+        "Unknown",
+    )
+
+    return out
 
 def get_global_filter_inputs(
     df: pd.DataFrame,

@@ -42,6 +42,7 @@ def apply_text_search(df: pd.DataFrame, search_text: str) -> pd.DataFrame:
     search_text = search_text.strip().lower()
 
     search_cols = [
+        "track_title",
         "album_title",
         "film_title",
         "composer_primary_clean",
