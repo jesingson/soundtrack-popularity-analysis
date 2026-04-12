@@ -40,6 +40,8 @@ ALBUM_FEATURES = [
     "pop",
     "rock",
     "world_folk",
+    "album_cohesion_score",
+    "album_cohesion_has_audio_data",
 ]
 
 TARGET_COL = "log_lfm_album_listeners"
@@ -552,14 +554,29 @@ def build_album_explorer_dataset(
     Returns:
         pd.DataFrame: Enriched album-level exploration dataframe.
     """
-    albums_df = add_track_counts(albums_df, wide_df)
-    albums_df = add_award_features(albums_df)
-    albums_df["award_category"] = derive_award_category(albums_df)
-    albums_df = add_composer_album_count(albums_df)
-    albums_df = add_release_lag_days(albums_df)
-    albums_df = add_label_names_clean(albums_df)
-    albums_df = normalize_genre_flags(albums_df)
-    albums_df = add_album_genres_display(albums_df)
+    albums_df = _get_base_album_metadata(albums_df, wide_df)
+
+    cohesion_band_df = build_album_cohesion_band_dataset(albums_df, wide_df)
+
+    merge_cols = [
+        col for col in [
+            "release_group_mbid",
+            "tmdb_id",
+            "album_cohesion_score",
+            "album_cohesion_band",
+        ]
+        if col in cohesion_band_df.columns
+    ]
+
+    if {"release_group_mbid", "tmdb_id", "album_cohesion_band"}.issubset(merge_cols):
+        albums_df = albums_df.merge(
+            cohesion_band_df[merge_cols].drop_duplicates(
+                subset=["release_group_mbid", "tmdb_id"]
+            ),
+            on=["release_group_mbid", "tmdb_id"],
+            how="left",
+            validate="1:1",
+        )
 
     return albums_df
 
@@ -586,9 +603,34 @@ def build_album_analytics(
     albums_df = add_award_features(albums_df)
     albums_df = add_composer_album_count(albums_df)
     albums_df = normalize_genre_flags(albums_df)
-    album_analytics_df = select_analysis_columns(albums_df)
+    albums_df = add_album_cohesion_analysis_features(albums_df, wide_df)
 
+    album_analytics_df = select_analysis_columns(albums_df)
     return album_analytics_df
+
+def _get_base_album_metadata(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a minimal album-level metadata slice without invoking the full
+    album explorer pipeline.
+
+    This helper is safe to use inside downstream builders that must avoid
+    recursive calls back into build_album_explorer_dataset(...).
+    """
+    base_df = albums_df.copy()
+
+    base_df = add_track_counts(base_df, wide_df)
+    base_df = add_award_features(base_df)
+    base_df["award_category"] = derive_award_category(base_df)
+    base_df = add_composer_album_count(base_df)
+    base_df = add_release_lag_days(base_df)
+    base_df = add_label_names_clean(base_df)
+    base_df = normalize_genre_flags(base_df)
+    base_df = add_album_genres_display(base_df)
+
+    return base_df
 
 def _get_track_album_metadata(
         albums_df: pd.DataFrame,
@@ -609,7 +651,7 @@ def _get_track_album_metadata(
         pd.DataFrame: Album-level metadata restricted to the columns needed
         by the track explorer.
     """
-    album_explorer_df = build_album_explorer_dataset(albums_df, wide_df).copy()
+    album_explorer_df = _get_base_album_metadata(albums_df, wide_df).copy()
 
     metadata_cols = [
         "tmdb_id",
@@ -1011,6 +1053,12 @@ OPTIONAL_TRACK_AUDIO_COLS = [
     "valence",
 ]
 
+TRACK_ARCHETYPE_SCORE_COLS = [
+    "track_intensity_score",
+    "track_acoustic_orchestral_score",
+    "track_speech_texture_score",
+]
+
 
 def _parse_duration_to_seconds(value: object) -> float:
     """
@@ -1128,6 +1176,152 @@ def _parse_camelot_mode(value: object) -> float:
         return 1.0
     return np.nan
 
+def _zscore_series(series: pd.Series) -> pd.Series:
+    """
+    Return a simple z-score transform, preserving NaN values.
+
+    If the series has zero variance or no valid values, return all-NaN so
+    downstream composite scores do not create fake signal.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    std = numeric.std(skipna=True)
+
+    if pd.isna(std) or std == 0:
+        return pd.Series(np.nan, index=series.index, dtype="float64")
+
+    mean = numeric.mean(skipna=True)
+    return (numeric - mean) / std
+
+
+def _mean_if_any(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """
+    Row-wise mean across the provided columns, returning NaN when all inputs
+    are missing on a row.
+    """
+    if not cols:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+
+    out = df[cols].mean(axis=1, skipna=True)
+    return out.where(df[cols].notna().any(axis=1), np.nan)
+
+
+def add_track_archetype_scores(
+    track_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Add reusable track-level archetype scores derived only from cleaned audio
+    features.
+
+    Archetypes:
+    - track_intensity_score: energy + loudness
+    - track_acoustic_orchestral_score: acousticness + instrumentalness
+    - track_speech_texture_score: speechiness only
+
+    Notes:
+    - These are descriptive character dimensions, not outcome variables.
+    - Inputs are z-scored first so mixed scales can be combined sensibly.
+    """
+    out = track_df.copy()
+
+    energy_z = _zscore_series(out["energy"]) if "energy" in out.columns else None
+    loudness_z = _zscore_series(out["loudness"]) if "loudness" in out.columns else None
+    acousticness_z = (
+        _zscore_series(out["acousticness"]) if "acousticness" in out.columns else None
+    )
+    instrumentalness_z = (
+        _zscore_series(out["instrumentalness"])
+        if "instrumentalness" in out.columns else None
+    )
+    speechiness_z = (
+        _zscore_series(out["speechiness"]) if "speechiness" in out.columns else None
+    )
+
+    if energy_z is not None or loudness_z is not None:
+        intensity_parts = pd.DataFrame(index=out.index)
+        if energy_z is not None:
+            intensity_parts["energy_z"] = energy_z
+        if loudness_z is not None:
+            intensity_parts["loudness_z"] = loudness_z
+
+        out["track_intensity_score"] = _mean_if_any(
+            intensity_parts,
+            list(intensity_parts.columns),
+        )
+    else:
+        out["track_intensity_score"] = np.nan
+
+    if acousticness_z is not None or instrumentalness_z is not None:
+        acoustic_parts = pd.DataFrame(index=out.index)
+        if acousticness_z is not None:
+            acoustic_parts["acousticness_z"] = acousticness_z
+        if instrumentalness_z is not None:
+            acoustic_parts["instrumentalness_z"] = instrumentalness_z
+
+        out["track_acoustic_orchestral_score"] = _mean_if_any(
+            acoustic_parts,
+            list(acoustic_parts.columns),
+        )
+    else:
+        out["track_acoustic_orchestral_score"] = np.nan
+
+    if speechiness_z is not None:
+        out["track_speech_texture_score"] = speechiness_z
+    else:
+        out["track_speech_texture_score"] = np.nan
+
+    return out
+
+def _band_from_zscore(value: float) -> str | None:
+    """
+    Convert a z-scored archetype dimension into a simple categorical band.
+
+    Thresholds are intentionally conservative:
+    - <= -0.5 -> Low
+    - >= 0.5 -> High
+    - otherwise -> Medium
+    """
+    if pd.isna(value):
+        return None
+    if value <= -0.5:
+        return "Low"
+    if value >= 0.5:
+        return "High"
+    return "Medium"
+
+
+def add_track_archetype_bands(
+    track_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Add user-facing categorical archetype bands from the internal archetype scores.
+
+    Creates:
+    - track_intensity_band
+    - track_acoustic_orchestral_band
+    - track_speech_texture_band
+    """
+    out = track_df.copy()
+
+    if "track_intensity_score" in out.columns:
+        out["track_intensity_band"] = out["track_intensity_score"].apply(_band_from_zscore)
+    else:
+        out["track_intensity_band"] = None
+
+    if "track_acoustic_orchestral_score" in out.columns:
+        out["track_acoustic_orchestral_band"] = out[
+            "track_acoustic_orchestral_score"
+        ].apply(_band_from_zscore)
+    else:
+        out["track_acoustic_orchestral_band"] = None
+
+    if "track_speech_texture_score" in out.columns:
+        out["track_speech_texture_band"] = out[
+            "track_speech_texture_score"
+        ].apply(_band_from_zscore)
+    else:
+        out["track_speech_texture_band"] = None
+
+    return out
 
 def clean_track_audio_features(
     track_df: pd.DataFrame,
@@ -1274,8 +1468,10 @@ def clean_track_audio_features(
     if "mode" in track_df.columns:
         track_df["is_major_mode"] = track_df["mode"]
 
-    return track_df
+    track_df = add_track_archetype_scores(track_df)
+    track_df = add_track_archetype_bands(track_df)
 
+    return track_df
 
 def _entropy_from_series(series: pd.Series) -> float:
     """
@@ -1311,6 +1507,86 @@ def safe_ratio(
     out = numerator / denominator
     out = out.where(denominator > 0)
     return out.replace([np.inf, -np.inf], np.nan)
+
+def _zscore_series(series: pd.Series) -> pd.Series:
+    """
+    Return a z-score transform while preserving NaN values.
+
+    If the input has zero variance or no valid values, return all-NaN so the
+    downstream composite does not create fake separation.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    std = numeric.std(skipna=True)
+
+    if pd.isna(std) or std == 0:
+        return pd.Series(np.nan, index=series.index, dtype="float64")
+
+    mean = numeric.mean(skipna=True)
+    return (numeric - mean) / std
+
+
+def _row_mean_if_any(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """
+    Row-wise mean across selected columns, returning NaN when all inputs are missing.
+    """
+    if not cols:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+
+    out = df[cols].mean(axis=1, skipna=True)
+    return out.where(df[cols].notna().any(axis=1), np.nan)
+
+
+def add_album_cohesion_features(
+    cohesion_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Add a composite album cohesion score and user-facing categorical cohesion band.
+
+    The score is based on a small set of core variability metrics:
+    - energy_variance_proxy_std
+    - danceability_variance_proxy_std
+    - tempo_variance_proxy_std
+
+    Higher variance means lower cohesion, so the averaged z-score is inverted:
+    higher album_cohesion_score = more cohesive album.
+    """
+    out = cohesion_df.copy()
+
+    component_cols = [
+        col for col in [
+            "energy_variance_proxy_std",
+            "danceability_variance_proxy_std",
+            "tempo_variance_proxy_std",
+        ]
+        if col in out.columns
+    ]
+
+    if not component_cols:
+        out["album_cohesion_score"] = np.nan
+        out["album_cohesion_band"] = None
+        return out
+
+    z_df = pd.DataFrame(index=out.index)
+    for col in component_cols:
+        z_df[f"{col}_z"] = _zscore_series(out[col])
+
+    # Invert so higher score = more cohesive / less variable.
+    out["album_cohesion_score"] = -1.0 * _row_mean_if_any(
+        z_df,
+        list(z_df.columns),
+    )
+
+    def assign_band(value: float) -> str:
+        if pd.isna(value):
+            return "Insufficient Audio Data"
+        if value >= 0.5:
+            return "Highly Cohesive"
+        if value <= -0.5:
+            return "Diverse / Varied"
+        return "Moderately Cohesive"
+
+    out["album_cohesion_band"] = out["album_cohesion_score"].apply(assign_band)
+    return out
 
 def _first_non_null(series: pd.Series):
     """
@@ -1391,6 +1667,119 @@ def _assign_total_share_bucket(value: float) -> str | None:
         return "35–50%"
     return "50%+"
 
+
+def build_album_cohesion_band_dataset(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a minimal one-row-per-album dataframe containing only the composite
+    album cohesion score and user-facing cohesion band.
+
+    This helper is intentionally lightweight so album exploration pages can
+    use cohesion categories without depending on the full Page 22 dataset.
+    """
+    track_df = _prepare_track_base(wide_df).copy()
+    track_df = clean_track_audio_features(track_df)
+
+    group_keys = ["release_group_mbid", "tmdb_id"]
+
+    agg_spec: dict[str, object] = {}
+
+    for col in [
+        "energy",
+        "danceability",
+        "tempo",
+    ]:
+        if col in track_df.columns:
+            agg_spec[col] = ["std"]
+
+    if not agg_spec:
+        return pd.DataFrame(columns=[
+            "release_group_mbid",
+            "tmdb_id",
+            "album_cohesion_score",
+            "album_cohesion_band",
+        ])
+
+    cohesion_df = track_df.groupby(group_keys, dropna=False).agg(agg_spec)
+    cohesion_df.columns = [
+        "_".join([part for part in col if part]).strip("_")
+        if isinstance(col, tuple) else col
+        for col in cohesion_df.columns.to_flat_index()
+    ]
+    cohesion_df = cohesion_df.reset_index()
+
+    rename_map = {
+        "energy_std": "energy_variance_proxy_std",
+        "danceability_std": "danceability_variance_proxy_std",
+        "tempo_std": "tempo_variance_proxy_std",
+    }
+    existing_renames = {
+        old: new for old, new in rename_map.items()
+        if old in cohesion_df.columns
+    }
+    cohesion_df = cohesion_df.rename(columns=existing_renames)
+
+    cohesion_df = add_album_cohesion_features(cohesion_df)
+
+    return cohesion_df[
+        [
+            col for col in [
+                "release_group_mbid",
+                "tmdb_id",
+                "album_cohesion_score",
+                "album_cohesion_band",
+            ]
+            if col in cohesion_df.columns
+        ]
+    ].copy()
+
+def add_album_cohesion_analysis_features(
+    albums_df: pd.DataFrame,
+    wide_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Merge analysis-ready cohesion features into the album analytics dataframe.
+
+    Adds:
+    - album_cohesion_score: continuous cohesion signal
+    - album_cohesion_has_audio_data: 1 when cohesion could be computed, else 0
+
+    The categorical explorer label `album_cohesion_band` remains useful for
+    exploratory pages, but the statistical/modeling pages should start from
+    a cleaner numeric representation.
+    """
+    out = albums_df.copy()
+
+    cohesion_df = build_album_cohesion_band_dataset(albums_df, wide_df)
+
+    merge_cols = [
+        col for col in [
+            "release_group_mbid",
+            "tmdb_id",
+            "album_cohesion_score",
+        ]
+        if col in cohesion_df.columns
+    ]
+
+    if {"release_group_mbid", "tmdb_id", "album_cohesion_score"}.issubset(merge_cols):
+        out = out.merge(
+            cohesion_df[merge_cols].drop_duplicates(
+                subset=["release_group_mbid", "tmdb_id"]
+            ),
+            on=["release_group_mbid", "tmdb_id"],
+            how="left",
+            validate="1:1",
+        )
+    else:
+        out["album_cohesion_score"] = np.nan
+
+    out["album_cohesion_has_audio_data"] = (
+        out["album_cohesion_score"].notna().astype(int)
+    )
+
+    return out
 
 def build_track_album_relationship_dataset(
     albums_df: pd.DataFrame,

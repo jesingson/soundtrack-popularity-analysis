@@ -33,6 +33,7 @@ EXCLUDED_EXPLORER_COLS = {
     "film_ingested_at",
     "match_method",
     "matched_at",
+    "lfm_album_query_method",
     "us_date_has_missing_month",
     "us_date_has_missing_day",
     "us_any_event_missing_month",
@@ -1050,8 +1051,8 @@ def main() -> None:
     color_options = get_color_options(explorer_df)
 
     freeform_default_y = (
-        "lfm_album_listeners"
-        if "lfm_album_listeners" in freeform_numeric_options
+        "lfm_album_playcount"
+        if "lfm_album_playcount" in freeform_numeric_options
         else dp.TARGET_COL
     )
 

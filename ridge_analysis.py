@@ -23,6 +23,7 @@ DEFAULT_RIDGE_GROUPS = {
         "film_runtime_min",
         "composer_album_count",
         "film_rating",
+        "album_cohesion_score",
         "us_score_nominee_count",
         "us_song_nominee_count",
         "bafta_nominee",
@@ -40,6 +41,7 @@ DEFAULT_RIDGE_GROUPS = {
         "film_runtime_min",
         "composer_album_count",
         "film_rating",
+        "album_cohesion_score",
     ],
     "awards_and_creator": [
         "composer_album_count",
@@ -90,6 +92,8 @@ DEFAULT_FEATURE_LABELS = {
     "us_score_nominee_count": "Any score nominations",
     "us_song_nominee_count": "Any song nominations",
     "bafta_nominee": "BAFTA nominee",
+    "album_cohesion_score": "Album cohesion above median",
+    "album_cohesion_has_audio_data": "Album has enough audio data for cohesion",
 }
 
 DEFAULT_FEATURE_LABELS.update({

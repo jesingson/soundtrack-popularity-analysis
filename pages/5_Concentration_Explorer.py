@@ -28,6 +28,7 @@ PREFERRED_GROUP_COLS = [
     "label_names",
     "film_genre_group",
     "album_genre_group",
+    "album_cohesion_band",
     "film_year",
     "award_category",
 ]

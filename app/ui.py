@@ -131,6 +131,14 @@ DISPLAY_LABELS = {
     "speechiness": "Speechiness",
     "tempo": "Tempo",
     "spotify_popularity": "Spotify Popularity",
+    "track_intensity_score": "Track Intensity Score",
+    "track_acoustic_orchestral_score": "Track Acoustic / Orchestral Score",
+    "track_speech_texture_score": "Track Speech Texture Score",
+    "track_intensity_band": "Track Intensity Archetype",
+    "track_acoustic_orchestral_band": "Track Acoustic / Orchestral Archetype",
+    "track_speech_texture_band": "Track Speech Texture Archetype",
+    "album_cohesion_score": "Album Cohesion Score",
+    "album_cohesion_band": "Album Cohesion",
 }
 
 

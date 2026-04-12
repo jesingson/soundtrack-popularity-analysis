@@ -325,6 +325,7 @@ def get_group_comparison_controls(
                 "None",
                 "album_genre_group",
                 "film_genre_group",
+                "album_cohesion_band",
                 "album_us_release_year",
                 "bafta_nominee",
                 "oscar_score_nominee",
@@ -1934,4 +1935,145 @@ def get_track_relationship_controls(
         "min_album_listeners": min_album_listeners,
         "audio_only": audio_only,
         "show_data_table": show_data_table,
+    }
+
+# Page 40 Controls
+# Page 40 Controls
+def get_track_correlation_controls(
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Correlation Explorer.
+
+    Args:
+        composer_options: Available composer values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Correlation Controls")
+
+    method = st.sidebar.radio(
+        "Correlation method",
+        options=["spearman", "pearson"],
+        index=0,
+        help=(
+            "Spearman emphasizes rank-order relationships and is a safer "
+            "default for skewed music-performance data. Pearson emphasizes "
+            "linear relationships."
+        ),
+    )
+
+    anchor_metric = st.sidebar.selectbox(
+        "Success anchor",
+        options=[
+            "lfm_track_listeners",
+            "lfm_track_playcount",
+            "spotify_popularity",
+        ],
+        index=0,
+        format_func=get_display_label,
+        help=(
+            "Choose which track-success metric to use in the ranked "
+            "association view."
+        ),
+    )
+
+    ranking_mode = st.sidebar.selectbox(
+        "Ranking mode",
+        options=["Absolute", "Positive only", "Negative only"],
+        index=0,
+        help=(
+            "Absolute ranks the strongest relationships by magnitude. "
+            "Positive only and Negative only restrict the ranking to one direction."
+        ),
+    )
+
+    top_n = st.sidebar.slider(
+        "Top ranked relationships",
+        min_value=5,
+        max_value=20,
+        value=10,
+        step=1,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Heatmap Controls")
+
+    heatmap_scope = st.sidebar.radio(
+        "Heatmap scope",
+        options=["Full matrix", "Predictors only"],
+        index=0,
+        help=(
+            "Full matrix includes success anchors plus candidate predictors. "
+            "Predictors only removes the success anchors to focus on feature redundancy."
+        ),
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Track Filters")
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with core audio features",
+        value=True,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Tables")
+
+    show_ranked_table = st.sidebar.checkbox(
+        "Show ranked association table",
+        value=False,
+    )
+
+    show_redundancy_table = st.sidebar.checkbox(
+        "Show multicollinearity watchlist",
+        value=True,
+    )
+
+    show_source_table = st.sidebar.checkbox(
+        "Show source track table",
+        value=False,
+    )
+
+    return {
+        "method": method,
+        "anchor_metric": anchor_metric,
+        "ranking_mode": ranking_mode,
+        "top_n": top_n,
+        "heatmap_scope": heatmap_scope,
+        "selected_composers": selected_composers,
+        "search_text": search_text,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+        "show_ranked_table": show_ranked_table,
+        "show_redundancy_table": show_redundancy_table,
+        "show_source_table": show_source_table,
     }

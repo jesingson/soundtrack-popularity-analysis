@@ -106,6 +106,7 @@ PREFERRED_GROUP_COLS = [
     "label_names",
     "album_genre_group",
     "film_genre_group",
+    "album_cohesion_band",
     "album_us_release_year",
     "bafta_nominee",
     "oscar_score_nominee",

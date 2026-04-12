@@ -64,6 +64,7 @@ def define_regression_features(
         "days_since_album_release",
         "n_tracks",
         "composer_album_count",
+        "album_cohesion_score",
     ]
     album_binary = [c for c in album_features if c not in album_continuous]
 
@@ -230,6 +231,13 @@ def apply_regression_transforms(
             df_model[c] = df_model[c] - mu
         else:
             df_model[c] = (df_model[c] - mu) / sd
+
+    # Cohesion is missing for albums with insufficient valid track-audio data.
+    # After standardization, impute missing cohesion scores to 0 so these rows
+    # stay in the model. The companion binary flag album_cohesion_has_audio_data
+    # captures whether the cohesion value was actually observed.
+    if "album_cohesion_score" in df_model.columns:
+        df_model["album_cohesion_score"] = df_model["album_cohesion_score"].fillna(0.0)
 
     logged_predictors = [c for c in heavy_tailed if c in x_cont]
 

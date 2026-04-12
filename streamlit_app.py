@@ -50,6 +50,10 @@ navigation = st.navigation(
             st.Page("pages/8_Correlation_Explorer.py", title="Correlation Explorer"),
             st.Page("pages/9_Ridge_Explorer.py", title="Ridge Explorer"),
             st.Page("pages/10_Regression_Explorer.py", title="Regression Explorer"),
+            st.Page(
+                "pages/40_Track_Correlation_Explorer.py",
+                title="Track Correlation Explorer",
+            ),
         ],
         "🟩 Track Data Exploration": [
             st.Page(

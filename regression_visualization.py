@@ -99,14 +99,15 @@ def create_coefficient_whisker_chart(
         x="x:Q"
     )
 
+    chart_height = max(700, len(coef_df) * 36)
+
     chart = (whiskers + dots + zero).properties(
         width=750,
-        height=700,
+        height=chart_height,
         title={
             "text": "Regression coefficients with 95% confidence intervals",
-                        "subtitle": [
-                "Dots are coefficient estimates; whiskers are 95% "
-                "confidence intervals.",
+            "subtitle": [
+                "Dots are coefficient estimates; whiskers are 95% confidence intervals.",
                 "Color indicates whether the confidence interval crosses 0."
             ]
         }

@@ -47,6 +47,7 @@ def apply_text_search(df: pd.DataFrame, search_text: str) -> pd.DataFrame:
         "film_title",
         "composer_primary_clean",
         "label_names",
+        "label_names",
     ]
 
     combined = pd.Series("", index=df.index)

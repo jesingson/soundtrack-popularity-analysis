@@ -30,6 +30,9 @@ TRACK_NUMERIC_PRIORITY = [
 TRACK_GROUP_PRIORITY = [
     "track_position_bucket",
     "track_type",
+    "track_intensity_band",
+    "track_acoustic_orchestral_band",
+    "track_speech_texture_band",
     "key_mode_label",
     "mode_label",
     "key_label",

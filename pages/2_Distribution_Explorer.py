@@ -96,6 +96,7 @@ PREFERRED_GROUP_COLS = [
     "label_names",
     "album_genre_group",
     "film_genre_group",
+    "album_cohesion_band",
     "album_us_release_year",
     "bafta_nominee",
     "oscar_score_nominee",
@@ -105,7 +106,6 @@ PREFERRED_GROUP_COLS = [
     "critics_score_nominee",
     "critics_song_nominee",
 ]
-
 
 def derive_multi_label_group(
     df: pd.DataFrame,
