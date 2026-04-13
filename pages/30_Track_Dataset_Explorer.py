@@ -15,10 +15,11 @@ from app.explorer_shared import (
     add_standard_multivalue_groups,
     get_clean_composer_options,
     get_global_filter_inputs,
-    rename_and_dedupe_for_display,
+    rename_track_page_columns_for_display,
     select_unique_existing_columns,
+    get_track_page_display_label,
 )
-from app.ui import apply_app_styles, get_display_label
+from app.ui import apply_app_styles
 
 
 DISPLAY_COLUMNS = [
@@ -36,6 +37,16 @@ DISPLAY_COLUMNS = [
     "album_genre_group",
     "film_genre_group",
     "award_category",
+    "film_vote_count",
+    "film_popularity",
+    "film_rating",
+    "film_runtime_min",
+    "days_since_film_release",
+    "n_tracks",
+    "album_release_lag_days",
+    "composer_album_count",
+    "album_cohesion_score",
+    "bafta_nominee",
     "lfm_album_listeners",
     "lfm_album_playcount",
     "lfm_track_listeners",
@@ -182,7 +193,7 @@ def build_audio_coverage_df(filtered_df: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "field": col,
-                "field_label": get_display_label(col),
+                "field_label": get_track_page_display_label(col),
                 "non_null_count": non_null,
                 "coverage_share": (non_null / total_rows) if total_rows > 0 else 0.0,
             }
@@ -382,7 +393,7 @@ def main() -> None:
         "Choose columns to display",
         options=default_display_columns,
         default=default_selected_columns,
-        format_func=get_display_label,
+        format_func=get_track_page_display_label,
     )
 
     if not selected_columns:
@@ -390,7 +401,7 @@ def main() -> None:
         return
 
     table_cols = select_unique_existing_columns(filtered_df, selected_columns)
-    display_df = rename_and_dedupe_for_display(filtered_df[table_cols])
+    display_df = rename_track_page_columns_for_display(filtered_df[table_cols].copy())
 
     if controls["show_data_table"]:
         st.dataframe(

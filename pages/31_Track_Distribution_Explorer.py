@@ -18,8 +18,9 @@ from app.explorer_shared import (
     get_global_filter_inputs,
     get_track_numeric_options,
     get_track_group_options,
+    get_track_page_display_label,
 )
-from app.ui import apply_app_styles, get_display_label
+from app.ui import apply_app_styles
 
 def add_display_fields(df: pd.DataFrame) -> pd.DataFrame:
     """Add grouped display fields used by the Track Distribution Explorer."""
@@ -139,7 +140,7 @@ def build_distribution_context_caption(
     top_n_groups: int | None,
 ) -> str:
     """Build a short caption describing the current distribution view."""
-    metric_label = get_display_label(metric)
+    metric_label = get_track_page_display_label(metric)
 
     if group_var == "None":
         return (
@@ -148,7 +149,7 @@ def build_distribution_context_caption(
             + (" on the log10 scale." if use_log else ".")
         )
 
-    group_label = get_display_label(group_var).lower()
+    group_label = get_track_page_display_label(group_var).lower()
 
     if selected_groups:
         if len(selected_groups) <= 5:
@@ -239,9 +240,9 @@ def grouped_histogram(plot_df: pd.DataFrame, group_var: str, bins: int) -> alt.C
         .encode(
             x=alt.X("plot_value:Q", bin=alt.Bin(maxbins=bins), title="Displayed Value"),
             y=alt.Y("count():Q", title="Track Count"),
-            color=alt.Color(f"{group_var}:N", title=get_display_label(group_var)),
+            color=alt.Color(f"{group_var}:N", title=get_track_page_display_label(group_var)),
             tooltip=[
-                alt.Tooltip(f"{group_var}:N", title=get_display_label(group_var)),
+                alt.Tooltip(f"{group_var}:N", title=get_track_page_display_label(group_var)),
                 alt.Tooltip("count():Q", title="Tracks"),
             ],
         )
@@ -279,9 +280,9 @@ def grouped_pdf_line(plot_df: pd.DataFrame, group_var: str) -> alt.Chart:
         .encode(
             x=alt.X("plot_value:Q", title="Displayed Value"),
             y=alt.Y("density:Q", title="Density"),
-            color=alt.Color(f"{group_var}:N", title=get_display_label(group_var)),
+            color=alt.Color(f"{group_var}:N", title=get_track_page_display_label(group_var)),
             tooltip=[
-                alt.Tooltip(f"{group_var}:N", title=get_display_label(group_var)),
+                alt.Tooltip(f"{group_var}:N", title=get_track_page_display_label(group_var)),
             ],
         )
         .properties(height=420)
@@ -327,9 +328,9 @@ def grouped_cdf_line(plot_df: pd.DataFrame, group_var: str) -> alt.Chart:
         .encode(
             x=alt.X("plot_value:Q", title="Displayed Value"),
             y=alt.Y("cdf:Q", title="Cumulative Probability"),
-            color=alt.Color(f"{group_var}:N", title=get_display_label(group_var)),
+            color=alt.Color(f"{group_var}:N", title=get_track_page_display_label(group_var)),
             tooltip=[
-                alt.Tooltip(f"{group_var}:N", title=get_display_label(group_var)),
+                alt.Tooltip(f"{group_var}:N", title=get_track_page_display_label(group_var)),
             ],
         )
         .properties(height=420)
@@ -429,8 +430,24 @@ def main() -> None:
         st.warning("No data after filtering.")
         return
 
-    metric_options = get_track_numeric_options(df)
-    group_options = get_track_group_options(df)
+    st.sidebar.header("Track Distribution Controls")
+    include_context_features = st.sidebar.checkbox(
+        "Include film & album context",
+        value=False,
+        help=(
+            "Adds film- and album-level variables to the selectable metric and "
+            "grouping lists while keeping native track variables first."
+        ),
+    )
+
+    metric_options = get_track_numeric_options(
+        df,
+        include_context_features=include_context_features,
+    )
+    group_options = get_track_group_options(
+        df,
+        include_context_features=include_context_features,
+    )
     group_value_options_map = build_group_value_options_map(df, group_options)
 
     controls = get_track_distribution_controls(
@@ -438,6 +455,8 @@ def main() -> None:
         group_options=group_options,
         group_value_options_map=group_value_options_map,
     )
+
+    controls["include_context_features"] = include_context_features
 
     metric = controls["metric"]
     view_type = controls["view_type"]
@@ -496,7 +515,7 @@ def main() -> None:
 
     chart = chart.properties(
         title={
-            "text": f"{view_type} of {get_display_label(metric)}",
+            "text": f"{view_type} of {get_track_page_display_label(metric)}",
             "subtitle": [
                 "Displayed Value is log10-transformed." if use_log else "Displayed Value is shown on the raw scale."
             ],

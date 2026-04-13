@@ -20,8 +20,9 @@ from app.explorer_shared import (
     rename_and_dedupe_for_display,
     get_track_numeric_options,
     get_track_group_options,
+    get_track_page_display_label,
 )
-from app.ui import apply_app_styles, get_display_label
+from app.ui import apply_app_styles
 
 TOOLTIP_COLUMNS = [
     "film_title",
@@ -146,14 +147,15 @@ def filter_track_relationship_df(
 def build_relationship_context_caption(controls: dict) -> str:
     """Build a natural-language caption describing the current relationship view."""
     base = (
-        f"Comparing {get_display_label(controls['x_col'])} vs "
-        f"{get_display_label(controls['y_col'])}"
+        f"Comparing {get_track_page_display_label(controls['x_col'])} vs "
+        f"{get_track_page_display_label(controls['y_col'])}"
     )
 
     extras = []
+    extras.append(f"view = {controls['chart_mode']}")
 
     if controls["color_col"] != "None":
-        extras.append(f"color = {get_display_label(controls['color_col'])}")
+        extras.append(f"color = {get_track_page_display_label(controls['color_col'])}")
 
     if controls["transform_x"] != "None" or controls["transform_y"] != "None":
         transform_bits = []
@@ -254,8 +256,8 @@ def build_freeform_scatter_data(
             size=len(plot_df),
         )
 
-    x_display = get_display_label(x_col)
-    y_display = get_display_label(y_col)
+    x_display = get_track_page_display_label(x_col)
+    y_display = get_track_page_display_label(y_col)
 
     metrics = {
         "x_col": x_col,
@@ -286,7 +288,7 @@ def build_relationship_insight_summary(metrics: dict) -> list[tuple[str, str, st
     pearson_r = float(metrics["pearson_r"])
 
     color_value = (
-        get_display_label(metrics["color_col"])
+        get_track_page_display_label(metrics["color_col"])
         if metrics["color_col"] and metrics["color_col"] != "None"
         else "None"
     )
@@ -342,8 +344,8 @@ def build_relationship_supporting_insight(metrics: dict, controls: dict) -> str:
     """Build an educational interpretation of the scatterplot."""
     pearson_r = float(metrics["pearson_r"])
 
-    x_label = get_display_label(metrics["x_col"]).lower()
-    y_label = get_display_label(metrics["y_col"]).lower()
+    x_label = get_track_page_display_label(metrics["x_col"]).lower()
+    y_label = get_track_page_display_label(metrics["y_col"]).lower()
 
     strength = (
         "strong" if abs(pearson_r) >= 0.5
@@ -378,13 +380,181 @@ def build_relationship_supporting_insight(metrics: dict, controls: dict) -> str:
         )
 
     if controls["color_col"] != "None":
-        color_label = get_display_label(controls["color_col"]).lower()
+        color_label = get_track_page_display_label(controls["color_col"]).lower()
         base += (
             f" Coloring by {color_label} helps reveal whether distinct subgroups follow different patterns."
         )
 
     return base
 
+def build_relationship_mode_supporting_insight(
+    metrics: dict,
+    controls: dict,
+) -> str:
+    """Build a short interpretation tailored to the selected relationship chart mode."""
+    chart_mode = controls.get("chart_mode", "Scatter")
+
+    x_label = get_track_page_display_label(metrics["x_col"]).lower()
+    y_label = get_track_page_display_label(metrics["y_col"]).lower()
+
+    if chart_mode == "Density Heatmap":
+        return (
+            f"💡 This density view shows where tracks are most concentrated in the "
+            f"{x_label} × {y_label} space. Darker or more saturated cells indicate "
+            f"regions where many tracks overlap, which is especially useful when the "
+            f"scatterplot becomes too dense to read point-by-point."
+        )
+
+    if chart_mode == "Quantile Heatmap":
+        stat = controls.get("quantile_stat", "Mean Y")
+        return (
+            f"💡 This heatmap summarizes {stat.lower()} across the visible "
+            f"{x_label} × {y_label} space. It helps reveal whether stronger values "
+            f"of {y_label} cluster in particular regions rather than following a single "
+            f"clean linear relationship."
+        )
+
+    return build_relationship_supporting_insight(metrics, controls)
+
+def build_relationship_chart_insight(
+    plot_df: pd.DataFrame,
+    metrics: dict,
+    controls: dict,
+) -> str:
+    """Build a data-reactive insight tied to the active relationship chart mode."""
+    chart_mode = controls.get("chart_mode", "Scatter")
+    x_label = get_track_page_display_label(metrics["x_col"]).lower()
+    y_label = get_track_page_display_label(metrics["y_col"]).lower()
+
+    rows_used = int(metrics.get("rows_used", 0))
+    pearson_r = float(metrics.get("pearson_r", np.nan))
+
+    if plot_df.empty:
+        return "No visible relationship insight is available under the current filters."
+
+    if chart_mode == "Density Heatmap":
+        x_q10 = float(plot_df["x_value"].quantile(0.10))
+        x_q90 = float(plot_df["x_value"].quantile(0.90))
+        y_q10 = float(plot_df["y_value"].quantile(0.10))
+        y_q90 = float(plot_df["y_value"].quantile(0.90))
+
+        x_iqr = float(plot_df["x_value"].quantile(0.75) - plot_df["x_value"].quantile(0.25))
+        y_iqr = float(plot_df["y_value"].quantile(0.75) - plot_df["y_value"].quantile(0.25))
+
+        if abs(pearson_r) >= 0.5:
+            trend_phrase = "a strong overall linear structure"
+        elif abs(pearson_r) >= 0.2:
+            trend_phrase = "a moderate overall linear structure"
+        else:
+            trend_phrase = "only a weak overall linear structure"
+
+        return (
+            f"💡 Under the current filters, most visible tracks fall within the central "
+            f"{x_label} range of about {x_q10:.2f} to {x_q90:.2f} and the central "
+            f"{y_label} range of about {y_q10:.2f} to {y_q90:.2f}. The cloud shows "
+            f"{trend_phrase}, with an interquartile spread of {x_iqr:.2f} on {x_label} "
+            f"and {y_iqr:.2f} on {y_label}, which helps indicate whether the visible "
+            f"distribution is tightly concentrated or broadly diffuse."
+        )
+
+    if chart_mode == "Quantile Heatmap":
+        bins = int(controls.get("heatmap_bins", 30))
+        quantile_stat = controls.get("quantile_stat", "Mean Y")
+
+        temp_df = plot_df[["x_value", "y_value", "y_raw"]].copy()
+        temp_df["x_bin"] = pd.cut(temp_df["x_value"], bins=bins, duplicates="drop")
+        temp_df["y_bin"] = pd.cut(temp_df["y_value"], bins=bins, duplicates="drop")
+
+        grouped = (
+            temp_df.dropna(subset=["x_bin", "y_bin"])
+            .groupby(["x_bin", "y_bin"], observed=False)
+            .agg(
+                n=("y_raw", "size"),
+                mean_y=("y_raw", "mean"),
+                median_y=("y_raw", "median"),
+            )
+            .reset_index()
+        )
+
+        if grouped.empty:
+            return "💡 The visible data is too sparse to form stable heatmap regions under the current binning."
+
+        if quantile_stat == "Median Y":
+            value_col = "median_y"
+            stat_label = f"median {y_label}"
+        elif quantile_stat == "Count":
+            value_col = "n"
+            stat_label = "track count"
+        else:
+            value_col = "mean_y"
+            stat_label = f"mean {y_label}"
+
+        top_cell = grouped.sort_values([value_col, "n"], ascending=[False, False]).iloc[0]
+        coverage = float(top_cell["n"]) / rows_used if rows_used > 0 else np.nan
+
+        x_bin_label = str(top_cell["x_bin"])
+        y_bin_label = str(top_cell["y_bin"])
+
+        if quantile_stat == "Count":
+            return (
+                f"💡 The densest visible region contains {int(top_cell['n']):,} tracks "
+                f"({coverage:.1%} of the plotted sample), concentrated around "
+                f"{x_label} bin {x_bin_label} and {y_label} bin {y_bin_label}. "
+                f"That suggests the relationship is anchored by one especially common region "
+                f"rather than being evenly distributed across the space."
+            )
+
+        return (
+            f"💡 The strongest visible heatmap region is in the {x_label} bin {x_bin_label} "
+            f"and {y_label} bin {y_bin_label}, where the cell-level {stat_label} reaches "
+            f"{float(top_cell[value_col]):.2f} across {int(top_cell['n']):,} tracks "
+            f"({coverage:.1%} of the plotted sample). That indicates the highest observed "
+            f"outcomes are concentrated in a specific pocket of the visible relationship space "
+            f"rather than spread evenly across all tracks."
+        )
+
+    x_q10 = float(plot_df["x_value"].quantile(0.10))
+    x_q90 = float(plot_df["x_value"].quantile(0.90))
+    y_q10 = float(plot_df["y_value"].quantile(0.10))
+    y_q90 = float(plot_df["y_value"].quantile(0.90))
+
+    if pearson_r > 0.2:
+        direction_phrase = "higher visible X values tend to align with higher visible Y values"
+    elif pearson_r < -0.2:
+        direction_phrase = "higher visible X values tend to align with lower visible Y values"
+    else:
+        direction_phrase = "the visible relationship is weak, so similar X values often map to a wide range of Y outcomes"
+
+    return (
+        f"💡 Most visible tracks lie between about {x_q10:.2f} and {x_q90:.2f} on "
+        f"{x_label} and between {y_q10:.2f} and {y_q90:.2f} on {y_label}. Under the "
+        f"current filters, {direction_phrase}, which helps explain whether the cloud forms "
+        f"a coherent band or a much looser scatter."
+    )
+
+def build_relationship_light_guide(
+    metrics: dict,
+    controls: dict,
+) -> str:
+    """Return a minimal interpretation hint for non-scatter relationship views."""
+    chart_mode = controls.get("chart_mode", "Scatter")
+    x_label = get_track_page_display_label(metrics["x_col"]).lower()
+    y_label = get_track_page_display_label(metrics["y_col"]).lower()
+
+    if chart_mode == "Density Heatmap":
+        return (
+            f"Darker cells indicate where many tracks share similar "
+            f"{x_label} and {y_label} values."
+        )
+
+    if chart_mode == "Quantile Heatmap":
+        stat = controls.get("quantile_stat", "Mean Y").lower()
+        return (
+            f"Color reflects {stat} within each region of the visible "
+            f"{x_label} × {y_label} space."
+        )
+
+    return ""
 
 def create_freeform_scatter_chart(
     plot_df: pd.DataFrame,
@@ -398,19 +568,19 @@ def create_freeform_scatter_chart(
     for col in ["film_title", "album_title", "track_title", "composer_primary_clean"]:
         if col in plot_df.columns:
             tooltip_fields.append(
-                alt.Tooltip(f"{col}:N", title=get_display_label(col))
+                alt.Tooltip(f"{col}:N", title=get_track_page_display_label(col))
             )
 
     tooltip_fields.extend(
         [
             alt.Tooltip(
                 "x_raw:Q",
-                title=f"{get_display_label(metrics['x_col'])} (Raw)",
+                title=f"{get_track_page_display_label(metrics['x_col'])} (Raw)",
                 format=",.3f",
             ),
             alt.Tooltip(
                 "y_raw:Q",
-                title=f"{get_display_label(metrics['y_col'])} (Raw)",
+                title=f"{get_track_page_display_label(metrics['y_col'])} (Raw)",
                 format=",.3f",
             ),
         ]
@@ -439,7 +609,7 @@ def create_freeform_scatter_chart(
             tooltip_fields.append(
                 alt.Tooltip(
                     f"{metrics['color_col']}:Q",
-                    title=get_display_label(metrics["color_col"]),
+                    title=get_track_page_display_label(metrics["color_col"]),
                     format=",.3f",
                 )
             )
@@ -447,7 +617,7 @@ def create_freeform_scatter_chart(
             tooltip_fields.append(
                 alt.Tooltip(
                     f"{metrics['color_col']}:N",
-                    title=get_display_label(metrics["color_col"]),
+                    title=get_track_page_display_label(metrics["color_col"]),
                 )
             )
 
@@ -465,7 +635,7 @@ def create_freeform_scatter_chart(
         points = base.encode(
             color=alt.Color(
                 f"{metrics['color_col']}:N",
-                title=get_display_label(metrics["color_col"]),
+                title=get_track_page_display_label(metrics["color_col"]),
             )
         )
     else:
@@ -493,7 +663,7 @@ def create_freeform_scatter_chart(
         width=750,
         height=500,
         title={
-            "text": f"{get_display_label(metrics['x_col'])} vs {get_display_label(metrics['y_col'])}",
+            "text": f"{get_track_page_display_label(metrics['x_col'])} vs {get_track_page_display_label(metrics['y_col'])}",
             "subtitle": [subtitle],
         },
     )
@@ -506,6 +676,154 @@ def build_supporting_table(plot_df: pd.DataFrame) -> pd.DataFrame:
     cols = list(dict.fromkeys(cols))
     return rename_and_dedupe_for_display(plot_df[cols].head(200))
 
+def create_density_heatmap_chart(
+    plot_df: pd.DataFrame,
+    metrics: dict,
+    bins: int,
+) -> alt.Chart:
+    """Create a dense relationship view using a 2D binned heatmap of track counts."""
+    x_label = metrics["x_axis_title"]
+    y_label = metrics["y_axis_title"]
+
+    subtitle = (
+        f"{metrics['rows_used']:,} tracks | denser cells indicate where tracks cluster most"
+    )
+
+    binned = (
+        alt.Chart(plot_df)
+        .transform_bin(
+            as_=["x_bin_start", "x_bin_end"],
+            field="x_value",
+            bin=alt.Bin(maxbins=bins),
+        )
+        .transform_bin(
+            as_=["y_bin_start", "y_bin_end"],
+            field="y_value",
+            bin=alt.Bin(maxbins=bins),
+        )
+    )
+
+    return (
+        binned
+        .mark_rect()
+        .encode(
+            x=alt.X("x_bin_start:Q", bin="binned", title=x_label),
+            x2="x_bin_end:Q",
+            y=alt.Y("y_bin_start:Q", bin="binned", title=y_label),
+            y2="y_bin_end:Q",
+            color=alt.Color("count():Q", title="Track count"),
+            tooltip=[
+                alt.Tooltip("x_bin_start:Q", title=f"{x_label} from", format=",.3f"),
+                alt.Tooltip("x_bin_end:Q", title=f"{x_label} to", format=",.3f"),
+                alt.Tooltip("y_bin_start:Q", title=f"{y_label} from", format=",.3f"),
+                alt.Tooltip("y_bin_end:Q", title=f"{y_label} to", format=",.3f"),
+                alt.Tooltip("count():Q", title="Tracks"),
+            ],
+        )
+        .properties(
+            width=750,
+            height=500,
+            title={
+                "text": (
+                    f"{get_track_page_display_label(metrics['x_col'])} vs "
+                    f"{get_track_page_display_label(metrics['y_col'])}"
+                ),
+                "subtitle": [subtitle],
+            },
+        )
+    )
+
+def create_quantile_heatmap_chart(
+    plot_df: pd.DataFrame,
+    metrics: dict,
+    bins: int,
+    quantile_stat: str,
+) -> alt.Chart:
+    """Create a binned summary heatmap for the visible relationship space."""
+    x_label = metrics["x_axis_title"]
+    y_label = metrics["y_axis_title"]
+
+    if quantile_stat == "Median Y":
+        color_encoding = alt.Color(
+            "median(y_raw):Q",
+            title=f"Median {get_track_page_display_label(metrics['y_col'])}",
+        )
+        tooltip_fields = [
+            alt.Tooltip("count():Q", title="Tracks"),
+            alt.Tooltip(
+                "median(y_raw):Q",
+                title=f"Median {get_track_page_display_label(metrics['y_col'])}",
+                format=",.3f",
+            ),
+        ]
+        subtitle = "Cells summarize the median raw Y value within each visible region."
+    elif quantile_stat == "Count":
+        color_encoding = alt.Color(
+            "count():Q",
+            title="Track count",
+        )
+        tooltip_fields = [
+            alt.Tooltip("count():Q", title="Tracks"),
+        ]
+        subtitle = "Cells summarize how many visible tracks fall in each region."
+    else:
+        color_encoding = alt.Color(
+            "mean(y_raw):Q",
+            title=f"Mean {get_track_page_display_label(metrics['y_col'])}",
+        )
+        tooltip_fields = [
+            alt.Tooltip("count():Q", title="Tracks"),
+            alt.Tooltip(
+                "mean(y_raw):Q",
+                title=f"Mean {get_track_page_display_label(metrics['y_col'])}",
+                format=",.3f",
+            ),
+        ]
+        subtitle = "Cells summarize the mean raw Y value within each visible region."
+
+    binned = (
+        alt.Chart(plot_df)
+        .transform_bin(
+            as_=["x_bin_start", "x_bin_end"],
+            field="x_value",
+            bin=alt.Bin(maxbins=bins),
+        )
+        .transform_bin(
+            as_=["y_bin_start", "y_bin_end"],
+            field="y_value",
+            bin=alt.Bin(maxbins=bins),
+        )
+    )
+
+    return (
+        binned
+        .mark_rect()
+        .encode(
+            x=alt.X("x_bin_start:Q", bin="binned", title=x_label),
+            x2="x_bin_end:Q",
+            y=alt.Y("y_bin_start:Q", bin="binned", title=y_label),
+            y2="y_bin_end:Q",
+            color=color_encoding,
+            tooltip=[
+                alt.Tooltip("x_bin_start:Q", title=f"{x_label} from", format=",.3f"),
+                alt.Tooltip("x_bin_end:Q", title=f"{x_label} to", format=",.3f"),
+                alt.Tooltip("y_bin_start:Q", title=f"{y_label} from", format=",.3f"),
+                alt.Tooltip("y_bin_end:Q", title=f"{y_label} to", format=",.3f"),
+                *tooltip_fields,
+            ],
+        )
+        .properties(
+            width=750,
+            height=500,
+            title={
+                "text": (
+                    f"{get_track_page_display_label(metrics['x_col'])} vs "
+                    f"{get_track_page_display_label(metrics['y_col'])}"
+                ),
+                "subtitle": [subtitle],
+            },
+        )
+    )
 
 def main() -> None:
     st.set_page_config(
@@ -528,8 +846,24 @@ def main() -> None:
     filter_inputs = get_global_filter_inputs(track_df)
     composer_options = get_clean_composer_options(track_df)
 
-    numeric_options = get_track_numeric_options(track_df)
-    color_options = get_track_group_options(track_df)
+    st.sidebar.header("Track Relationship Controls")
+    include_context_features = st.sidebar.checkbox(
+        "Include film & album context",
+        value=False,
+        help=(
+            "Adds film- and album-level numeric and grouping variables to the X/Y "
+            "and color selectors while keeping native track variables first."
+        ),
+    )
+
+    numeric_options = get_track_numeric_options(
+        track_df,
+        include_context_features=include_context_features,
+    )
+    color_options = get_track_group_options(
+        track_df,
+        include_context_features=include_context_features,
+    )
 
     global_controls = get_global_filter_controls(
         min_year=filter_inputs["min_year"],
@@ -543,6 +877,8 @@ def main() -> None:
         color_options=color_options,
         composer_options=composer_options,
     )
+
+    controls["include_context_features"] = include_context_features
 
     filtered_df = filter_track_relationship_df(
         track_df=track_df,
@@ -575,24 +911,45 @@ def main() -> None:
     render_relationship_insight_cards(metrics)
 
     st.markdown("### Relationship View")
-    chart = create_freeform_scatter_chart(
-        plot_df=plot_df,
-        line_df=line_df,
-        metrics=metrics,
-        show_trendline=controls["show_trendline"],
-    )
+
+    if controls["chart_mode"] == "Density Heatmap":
+        chart = create_density_heatmap_chart(
+            plot_df=plot_df,
+            metrics=metrics,
+            bins=controls["heatmap_bins"],
+        )
+    elif controls["chart_mode"] == "Quantile Heatmap":
+        chart = create_quantile_heatmap_chart(
+            plot_df=plot_df,
+            metrics=metrics,
+            bins=controls["heatmap_bins"],
+            quantile_stat=controls["quantile_stat"],
+        )
+    else:
+        chart = create_freeform_scatter_chart(
+            plot_df=plot_df,
+            line_df=line_df,
+            metrics=metrics,
+            show_trendline=controls["show_trendline"],
+        )
+
     st.altair_chart(chart, width="stretch")
 
-    st.caption(build_relationship_supporting_insight(metrics, controls))
     st.caption(
-        "Look for slope (direction), spread (consistency), and clustering (group structure). "
-        "Tighter bands indicate more predictable relationships."
+        build_relationship_chart_insight(
+            plot_df=plot_df,
+            metrics=metrics,
+            controls=controls,
+        )
     )
+
+    if controls["chart_mode"] != "Scatter":
+        st.caption(build_relationship_light_guide(metrics, controls))
 
     if controls["show_data_table"]:
         st.markdown("### Supporting Table")
         st.caption(
-            "This table is tied to the active scatterplot and shows the source rows behind the current relationship view."
+            "This table is tied to the active relationship view and shows the source rows behind the current chart."
         )
         table_df = build_supporting_table(plot_df)
         st.dataframe(

@@ -44,6 +44,79 @@ ALBUM_FEATURES = [
     "album_cohesion_has_audio_data",
 ]
 
+TRACK_CONTEXT_CONTINUOUS_COLS = [
+    "film_year",
+    "film_vote_count",
+    "film_popularity",
+    "film_budget",
+    "film_revenue",
+    "film_rating",
+    "film_runtime_min",
+    "days_since_film_release",
+    "n_tracks",
+    "album_release_lag_days",
+    "composer_album_count",
+    "lfm_album_listeners",
+    "lfm_album_playcount",
+    "album_cohesion_score",
+]
+
+TRACK_CONTEXT_BINARY_COLS = [
+    # film genre flags
+    "film_is_action",
+    "film_is_adventure",
+    "film_is_animation",
+    "film_is_comedy",
+    "film_is_crime",
+    "film_is_documentary",
+    "film_is_drama",
+    "film_is_family",
+    "film_is_fantasy",
+    "film_is_history",
+    "film_is_horror",
+    "film_is_music",
+    "film_is_mystery",
+    "film_is_romance",
+    "film_is_science_fiction",
+    "film_is_tv_movie",
+    "film_is_thriller",
+    "film_is_war",
+    "film_is_western",
+
+    # album genre flags
+    "ambient_experimental",
+    "classical_orchestral",
+    "electronic",
+    "hip_hop_rnb",
+    "pop",
+    "rock",
+    "world_folk",
+
+    # award / album context flags
+    "album_cohesion_has_audio_data",
+    "bafta_nominee",
+]
+
+TRACK_CONTEXT_CATEGORICAL_COLS = [
+    "film_genres",
+    "album_genres_display",
+    "award_category",
+]
+
+TRACK_CONTEXT_METADATA_COLS = [
+    "tmdb_id",
+    "release_group_mbid",
+    "album_title",
+    "film_title",
+    "composer_primary_clean",
+    "label_names",
+]
+
+TRACK_CONTEXT_DERIVED_AWARD_COLS = [
+    "us_score_nominee_count",
+    "us_song_nominee_count",
+]
+
 TARGET_COL = "log_lfm_album_listeners"
 Y_FEATURE = [TARGET_COL]
 
@@ -637,44 +710,51 @@ def _get_track_album_metadata(
         wide_df: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Build the album-level metadata slice needed for the track explorer.
+    Build the shared album/film context slice attached to track-level datasets.
 
-    This helper reuses the existing album exploration enrichment pipeline so
-    the track explorer inherits the same intuitive browsing and filtering
-    fields already used elsewhere in the app.
+    This helper intentionally keeps track-grain extraction separate from
+    album-/film-level enrichment. Track builders should:
+    1) prepare a true one-row-per-track base from wide_df
+    2) merge this shared context slice onto the track base
+
+    This allows all track exploratory and analytical pages to inherit the same
+    rich contextual metadata without polluting the core track extraction step.
 
     Args:
         albums_df: Album-level source dataframe.
         wide_df: Wide-format source dataframe containing track-level rows.
 
     Returns:
-        pd.DataFrame: Album-level metadata restricted to the columns needed
-        by the track explorer.
+        pd.DataFrame: Album-/film-level context dataframe keyed by
+        release_group_mbid and tmdb_id.
     """
     album_explorer_df = _get_base_album_metadata(albums_df, wide_df).copy()
+    album_explorer_df = add_album_cohesion_analysis_features(
+        album_explorer_df,
+        wide_df,
+    )
 
-    metadata_cols = [
-        "tmdb_id",
-        "release_group_mbid",
-        "album_title",
-        "film_title",
-        "composer_primary_clean",
-        "label_names",
-        "film_year",
-        "film_genres",
-        "album_genres_display",
-        "award_category",
-        "n_tracks",
-        "album_release_lag_days",
-        "composer_album_count",
-        "ambient_experimental",
-        "classical_orchestral",
-        "electronic",
-        "hip_hop_rnb",
-        "pop",
-        "rock",
-        "world_folk",
-    ]
+    # Bring album popularity fields into the shared context slice too so
+    # downstream track datasets do not need ad hoc merges for them.
+    for col in ["lfm_album_listeners", "lfm_album_playcount"]:
+        if col not in album_explorer_df.columns and col in albums_df.columns:
+            merge_df = albums_df[
+                ["release_group_mbid", "tmdb_id", col]
+            ].drop_duplicates()
+            album_explorer_df = album_explorer_df.merge(
+                merge_df,
+                on=["release_group_mbid", "tmdb_id"],
+                how="left",
+                validate="1:1",
+            )
+
+    metadata_cols = (
+        TRACK_CONTEXT_METADATA_COLS
+        + TRACK_CONTEXT_CONTINUOUS_COLS
+        + TRACK_CONTEXT_BINARY_COLS
+        + TRACK_CONTEXT_CATEGORICAL_COLS
+        + TRACK_CONTEXT_DERIVED_AWARD_COLS
+    )
 
     existing_cols = [
         col for col in metadata_cols
@@ -921,27 +1001,6 @@ def build_track_data_explorer_dataset(
     album_metadata_df = _get_track_album_metadata(albums_df, wide_df).copy()
     track_df = _prepare_track_base(wide_df).copy()
     track_df = clean_track_audio_features(track_df)
-
-    # Bring in album-level popularity fields for contextual filtering.
-    album_metric_cols = [
-        "release_group_mbid",
-        "tmdb_id",
-        "lfm_album_listeners",
-        "lfm_album_playcount",
-    ]
-    available_album_metric_cols = [
-        col for col in album_metric_cols
-        if col in albums_df.columns or col in ["release_group_mbid", "tmdb_id"]
-    ]
-
-    if {"lfm_album_listeners", "lfm_album_playcount"} - set(album_metadata_df.columns):
-        album_metric_df = albums_df[available_album_metric_cols].drop_duplicates()
-        album_metadata_df = album_metadata_df.merge(
-            album_metric_df,
-            on=["release_group_mbid", "tmdb_id"],
-            how="left",
-            validate="1:1",
-        )
 
     observed_counts_df = (
         track_df.groupby(

@@ -54,6 +54,14 @@ navigation = st.navigation(
                 "pages/40_Track_Correlation_Explorer.py",
                 title="Track Correlation Explorer",
             ),
+            st.Page(
+                "pages/41_Track_Ridge_Explorer.py",
+                title="Track Ridge Explorer",
+            ),
+            st.Page(
+                "pages/42_Track_Regression_Explorer.py",
+                title="Track Regression Explorer",
+            ),
         ],
         "🟩 Track Data Exploration": [
             st.Page(

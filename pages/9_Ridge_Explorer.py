@@ -1,11 +1,11 @@
-from imaplib import Debug
-
 import streamlit as st
 
 import ridge_analysis as ridge
 import ridge_visualization as ridge_viz
-from app.app_controls import get_ridge_controls
-from app.app_data import load_analysis_data, load_ridge_dynamic_groups
+from app.app_controls import get_global_filter_controls, get_ridge_controls
+from app.app_data import load_analysis_data, load_explorer_data, load_ridge_dynamic_groups
+from app.data_filters import filter_dataset
+from app.explorer_shared import get_global_filter_inputs
 from app.ui import apply_app_styles, rename_columns_for_display
 
 
@@ -22,6 +22,11 @@ PRESET_LABELS = {
     "custom": "Custom Selection",
 }
 
+EXCLUDED_RIDGE_FEATURES = {
+    "album_cohesion_has_audio_data",
+    "audio_feature_count",
+    "has_any_audio_features",
+}
 
 @st.cache_data
 def build_ridge_presets(
@@ -54,7 +59,10 @@ def build_ridge_presets(
 
     available_cols = set(album_analytics_df.columns)
     cleaned_registry = {
-        preset_name: [col for col in cols if col in available_cols]
+        preset_name: [
+            col for col in cols
+            if col in available_cols and col not in EXCLUDED_RIDGE_FEATURES
+        ]
         for preset_name, cols in preset_registry.items()
     }
 
@@ -128,6 +136,7 @@ def build_ridge_scope_caption(
     controls: dict,
     selected_features: list[str],
     n_ridges: int,
+    n_albums: int,
 ) -> str:
     """
     Build a short caption describing the current ridge scope.
@@ -152,9 +161,9 @@ def build_ridge_scope_caption(
     )
 
     return (
-        f"Current scope: {mode_phrase}, showing {n_ridges} binary feature "
-        f"splits with {controls['bins']} density bins, smoothing window "
-        f"{controls['smooth_window']}, and minimum group size "
+        f"Current scope: {mode_phrase}, {n_albums:,} visible albums, showing "
+        f"{n_ridges} binary feature splits with {controls['bins']} density bins, "
+        f"smoothing window {controls['smooth_window']}, and minimum group size "
         f"{controls['min_group_n']}."
     )
 
@@ -317,6 +326,58 @@ def build_selected_feature_caption(
 
     return f"{prefix}: {', '.join(selected_features)}."
 
+def attach_ridge_filter_metadata(
+    album_analytics_df,
+    album_explorer_df,
+):
+    """
+    Merge explorer-style global filter metadata onto the analysis dataframe.
+
+    This lets the ridge page use shared global filters (film year, film genres,
+    album genres) without changing the underlying analysis dataset used by the
+    ridge pipeline.
+
+    Args:
+        album_analytics_df: Narrow analysis-ready album dataframe.
+        album_explorer_df: Rich explorer dataframe containing filter metadata.
+
+    Returns:
+        pd.DataFrame: Analysis dataframe with filter metadata columns attached.
+    """
+    merge_keys = [
+        col for col in ["release_group_mbid", "tmdb_id"]
+        if col in album_analytics_df.columns and col in album_explorer_df.columns
+    ]
+
+    metadata_cols = [
+        col for col in [
+            "release_group_mbid",
+            "tmdb_id",
+            "film_year",
+            "film_genres",
+            "album_genres_display",
+        ]
+        if col in album_explorer_df.columns
+    ]
+
+    if not merge_keys or len(metadata_cols) <= len(merge_keys):
+        return album_analytics_df.copy()
+
+    metadata_df = (
+        album_explorer_df[metadata_cols]
+        .drop_duplicates(subset=merge_keys)
+        .copy()
+    )
+
+    merged_df = album_analytics_df.merge(
+        metadata_df,
+        on=merge_keys,
+        how="left",
+        validate="1:1",
+    )
+
+    return merged_df
+
 def main() -> None:
     """
     Run the Ridge Explorer Streamlit page.
@@ -338,10 +399,31 @@ def main() -> None:
     )
 
     album_analytics_df = load_analysis_data()
+    album_explorer_df = load_explorer_data()
+
+    ridge_filter_df = attach_ridge_filter_metadata(
+        album_analytics_df=album_analytics_df,
+        album_explorer_df=album_explorer_df,
+    )
+
+    filter_inputs = get_global_filter_inputs(ridge_filter_df)
+
+    global_controls = get_global_filter_controls(
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
+    )
+
+    filtered_album_df = filter_dataset(ridge_filter_df, global_controls).copy()
+
+    if filtered_album_df.empty:
+        st.warning("No albums remain under the current global filters.")
+        st.stop()
 
     initial_top_n = 8
     preset_registry = build_ridge_presets(
-        album_analytics_df=album_analytics_df,
+        album_analytics_df=filtered_album_df,
         top_n=initial_top_n,
     )
 
@@ -350,7 +432,7 @@ def main() -> None:
             feature
             for cols in ridge.DEFAULT_RIDGE_GROUPS.values()
             for feature in cols
-            if feature in album_analytics_df.columns
+            if feature in filtered_album_df.columns
         }
     )
 
@@ -364,7 +446,7 @@ def main() -> None:
     )
 
     preset_registry = build_ridge_presets(
-        album_analytics_df=album_analytics_df,
+        album_analytics_df=filtered_album_df,
         top_n=controls["top_n"],
     )
 
@@ -378,7 +460,7 @@ def main() -> None:
         st.stop()
 
     ridge_outputs, phase2_outputs = build_ridge_outputs_for_features(
-        album_analytics_df=album_analytics_df,
+        album_analytics_df=filtered_album_df,
         selected_features=tuple(selected_features),
         bins=controls["bins"],
         smooth_window=controls["smooth_window"],
@@ -410,6 +492,7 @@ def main() -> None:
             controls=controls,
             selected_features=selected_features,
             n_ridges=n_ridges,
+            n_albums=len(filtered_album_df),
         )
     )
 

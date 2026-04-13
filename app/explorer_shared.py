@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 
 from app.data_filters import split_multivalue_genres
-from app.ui import rename_columns_for_display
+from app.ui import rename_columns_for_display, get_display_label
+from data_processing import (
+    TRACK_CONTEXT_CONTINUOUS_COLS,
+    TRACK_CONTEXT_BINARY_COLS,
+    TRACK_CONTEXT_CATEGORICAL_COLS,
+    TRACK_CONTEXT_DERIVED_AWARD_COLS,
+)
 
 TRACK_NUMERIC_PRIORITY = [
     "lfm_track_listeners",
@@ -43,14 +49,203 @@ TRACK_GROUP_PRIORITY = [
     "composer_primary_clean",
 ]
 
-def get_track_numeric_options(df: pd.DataFrame) -> list[str]:
-    """Return track-level numeric options in preferred order."""
-    return [col for col in TRACK_NUMERIC_PRIORITY if col in df.columns]
+TRACK_CONTEXT_NUMERIC_PRIORITY = [
+    "film_year",
+    "film_vote_count",
+    "film_popularity",
+    "film_budget",
+    "film_revenue",
+    "film_rating",
+    "film_runtime_min",
+    "days_since_film_release",
+    "n_tracks",
+    "album_release_lag_days",
+    "composer_album_count",
+    "album_cohesion_score",
+]
+
+TRACK_CONTEXT_GROUP_PRIORITY = [
+    "film_genre_group",
+    "album_genre_group",
+    "film_year_bucket",
+    "award_category",
+    "film_is_action",
+    "film_is_adventure",
+    "film_is_animation",
+    "film_is_comedy",
+    "film_is_crime",
+    "film_is_documentary",
+    "film_is_drama",
+    "film_is_family",
+    "film_is_fantasy",
+    "film_is_history",
+    "film_is_horror",
+    "film_is_music",
+    "film_is_mystery",
+    "film_is_romance",
+    "film_is_science_fiction",
+    "film_is_tv_movie",
+    "film_is_thriller",
+    "film_is_war",
+    "film_is_western",
+    "ambient_experimental",
+    "classical_orchestral",
+    "electronic",
+    "hip_hop_rnb",
+    "pop",
+    "rock",
+    "world_folk",
+    "bafta_nominee",
+]
+
+TRACK_LEVEL_NUMERIC_COLS = {
+    "lfm_track_listeners",
+    "lfm_track_playcount",
+    "spotify_popularity",
+    "log_lfm_track_listeners",
+    "log_lfm_track_playcount",
+    "track_number",
+    "tempo",
+    "duration_seconds",
+    "energy",
+    "danceability",
+    "happiness",
+    "acousticness",
+    "instrumentalness",
+    "liveness",
+    "speechiness",
+    "loudness",
+    "track_intensity_score",
+    "track_acoustic_orchestral_score",
+    "track_speech_texture_score",
+    "track_count_observed",
+    "max_track_number_observed",
+    "track_position_pct",
+    "relative_track_position",
+    "reverse_track_position",
+    "audio_feature_count",
+    "track_share_of_album_listeners",
+    "track_share_of_album_playcount",
+}
+
+TRACK_LEVEL_GROUP_COLS = {
+    "track_position_bucket",
+    "track_intensity_band",
+    "track_acoustic_orchestral_band",
+    "track_speech_texture_band",
+    "is_first_track",
+    "is_last_track",
+    "is_first_three_tracks",
+    "is_first_five_tracks",
+    "is_instrumental",
+    "is_high_energy",
+    "is_high_happiness",
+    "is_major_mode",
+    "has_any_audio_features",
+    "key_label",
+    "mode_label",
+    "camelot",
+}
 
 
-def get_track_group_options(df: pd.DataFrame) -> list[str]:
-    """Return track-level grouping options in preferred order."""
-    return [col for col in TRACK_GROUP_PRIORITY if col in df.columns]
+def is_track_context_column(col: str) -> bool:
+    """
+    Return True when a column is album-/film-level context attached to the
+    track-grain dataset rather than a native track-level field.
+    """
+    return col in (
+        set(TRACK_CONTEXT_CONTINUOUS_COLS)
+        | set(TRACK_CONTEXT_BINARY_COLS)
+        | set(TRACK_CONTEXT_CATEGORICAL_COLS)
+        | set(TRACK_CONTEXT_DERIVED_AWARD_COLS)
+        | {
+            "album_title",
+            "film_title",
+            "composer_primary_clean",
+            "label_names",
+        }
+    )
+
+
+def get_track_page_display_label(col: str) -> str:
+    """
+    Return a track-page-specific display label that visually separates
+    track-level features from attached album/film context.
+    """
+    base_label = get_display_label(col)
+
+    if col in TRACK_LEVEL_NUMERIC_COLS or col in TRACK_LEVEL_GROUP_COLS:
+        return f"Track · {base_label}"
+
+    if is_track_context_column(col):
+        if col.startswith("film_") or col in {
+            "film_year",
+            "film_genres",
+            "film_title",
+            "days_since_film_release",
+            "film_vote_count",
+            "film_popularity",
+            "film_budget",
+            "film_revenue",
+            "film_rating",
+            "film_runtime_min",
+        }:
+            return f"Film · {base_label}"
+
+        return f"Album · {base_label}"
+
+    return base_label
+
+
+def rename_track_page_columns_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename dataframe columns using track-page-specific labels so track-level
+    and album/film-level fields are visually segregated in tables.
+    """
+    rename_map = {
+        col: get_track_page_display_label(col)
+        for col in df.columns
+    }
+    return df.rename(columns=rename_map)
+
+def get_track_numeric_options(
+    df: pd.DataFrame,
+    include_context_features: bool = False,
+) -> list[str]:
+    """
+    Return track-level numeric options in preferred order, with optional
+    film/album context metrics appended after the native track metrics.
+    """
+    base_cols = [col for col in TRACK_NUMERIC_PRIORITY if col in df.columns]
+
+    if not include_context_features:
+        return base_cols
+
+    context_cols = [
+        col for col in TRACK_CONTEXT_NUMERIC_PRIORITY
+        if col in df.columns and col not in base_cols
+    ]
+    return base_cols + context_cols
+
+
+def get_track_group_options(
+    df: pd.DataFrame,
+    include_context_features: bool = False,
+) -> list[str]:
+    """
+    Return track-level grouping options in preferred order, with optional
+    film/album grouping fields appended after native track groupings.
+    """
+    base_cols = [col for col in TRACK_GROUP_PRIORITY if col in df.columns]
+
+    if not include_context_features:
+        return base_cols
+
+    context_cols = [
+        col for col in TRACK_CONTEXT_GROUP_PRIORITY
+        if col in df.columns and col not in base_cols
+    ]
+    return base_cols + context_cols
 
 def derive_multi_label_group_from_flags(
     df: pd.DataFrame,

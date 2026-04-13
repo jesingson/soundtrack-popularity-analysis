@@ -1,5 +1,6 @@
 import streamlit as st
 from app.ui import get_display_label
+from app.explorer_shared import get_track_page_display_label
 
 # Global Filter Controls (multiple pages)
 def get_global_filter_controls(
@@ -1837,11 +1838,27 @@ def get_track_relationship_controls(
         format_func=get_display_label,
     )
 
+    chart_mode = st.sidebar.selectbox(
+        "Chart mode",
+        options=["Scatter", "Density Heatmap", "Quantile Heatmap"],
+        index=0,
+        help=(
+            "Scatter shows individual tracks. Density Heatmap bins dense point clouds "
+            "to reveal where tracks concentrate. Quantile Heatmap summarizes how the "
+            "Y metric behaves across the visible X/Y space."
+        ),
+    )
+
     color_col = st.sidebar.selectbox(
         "Color grouping",
         options=["None"] + color_options,
         index=0,
+        disabled=(chart_mode != "Scatter"),
         format_func=lambda x: "None" if x == "None" else get_display_label(x),
+        help=(
+            "Color grouping is only available in Scatter mode, where individual "
+            "tracks are drawn as points."
+        ),
     )
 
     st.sidebar.markdown("---")
@@ -1859,27 +1876,52 @@ def get_track_relationship_controls(
         index=0,
     )
 
-    apply_jitter = st.sidebar.checkbox(
-        "Jitter points",
-        value=False,
+    heatmap_bins = st.sidebar.slider(
+        "Heatmap bins",
+        min_value=10,
+        max_value=60,
+        value=30,
+        step=5,
+        help="Controls the grid resolution for density and quantile heatmaps.",
     )
 
-    if apply_jitter:
-        jitter_strength = st.sidebar.slider(
-            "Jitter strength",
-            min_value=0.000,
-            max_value=0.050,
-            value=0.008,
-            step=0.001,
-            format="%.3f",
+    quantile_stat = st.sidebar.selectbox(
+        "Quantile heatmap statistic",
+        options=["Mean Y", "Median Y", "Count"],
+        index=0,
+        disabled=(chart_mode != "Quantile Heatmap"),
+        help=(
+            "Choose what each heatmap cell summarizes. Mean/Median Y are most useful "
+            "for outcome-style views; Count shows raw occupancy."
+        ),
+    )
+
+    if chart_mode == "Scatter":
+        apply_jitter = st.sidebar.checkbox(
+            "Jitter points",
+            value=False,
+        )
+
+        if apply_jitter:
+            jitter_strength = st.sidebar.slider(
+                "Jitter strength",
+                min_value=0.000,
+                max_value=0.050,
+                value=0.008,
+                step=0.001,
+                format="%.3f",
+            )
+        else:
+            jitter_strength = 0.0
+
+        show_trendline = st.sidebar.checkbox(
+            "Show fitted line",
+            value=True,
         )
     else:
+        apply_jitter = False
         jitter_strength = 0.0
-
-    show_trendline = st.sidebar.checkbox(
-        "Show fitted line",
-        value=True,
-    )
+        show_trendline = False
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Track Filters")
@@ -1923,9 +1965,12 @@ def get_track_relationship_controls(
     return {
         "x_col": x_col,
         "y_col": y_col,
+        "chart_mode": chart_mode,
         "color_col": color_col,
         "transform_x": transform_x,
         "transform_y": transform_y,
+        "heatmap_bins": heatmap_bins,
+        "quantile_stat": quantile_stat,
         "apply_jitter": apply_jitter,
         "jitter_strength": jitter_strength,
         "show_trendline": show_trendline,
@@ -1937,7 +1982,6 @@ def get_track_relationship_controls(
         "show_data_table": show_data_table,
     }
 
-# Page 40 Controls
 # Page 40 Controls
 def get_track_correlation_controls(
     composer_options: list[str],
@@ -2001,12 +2045,23 @@ def get_track_correlation_controls(
     st.sidebar.subheader("Heatmap Controls")
 
     heatmap_scope = st.sidebar.radio(
-        "Heatmap scope",
-        options=["Full matrix", "Predictors only"],
+        "Heatmap feature scope",
+        options=[
+            "All visible features",
+            "Success anchors only",
+            "Track audio predictors",
+            "Track structure predictors",
+            "All track predictors",
+            "Context continuous",
+            "Context binary",
+            "All context predictors",
+            "All predictors",
+        ],
         index=0,
         help=(
-            "Full matrix includes success anchors plus candidate predictors. "
-            "Predictors only removes the success anchors to focus on feature redundancy."
+            "Choose which feature family to display in the heatmap. "
+            "This does not affect the ranked anchor view or the track-only "
+            "redundancy watchlist."
         ),
     )
 
@@ -2076,4 +2131,177 @@ def get_track_correlation_controls(
         "show_ranked_table": show_ranked_table,
         "show_redundancy_table": show_redundancy_table,
         "show_source_table": show_source_table,
+    }
+
+# Page 41 Controls
+def get_track_ridge_controls(
+    target_options: list[str],
+    preset_labels: dict[str, str],
+    preset_keys: list[str],
+    all_available_features: list[str],
+    default_custom_features: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Ridge Explorer.
+
+    Args:
+        target_options: Available track ridge target columns.
+        preset_labels: Mapping from preset key to display label.
+        preset_keys: Ordered list of preset keys.
+        all_available_features: Full set of available ridge features.
+        default_custom_features: Default feature list to preselect when
+            the user chooses the custom preset.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Ridge Controls")
+
+    target_col = st.sidebar.selectbox(
+        "Target",
+        options=target_options,
+        index=0,
+        format_func=get_track_page_display_label,
+    )
+
+    preset_key = st.sidebar.selectbox(
+        "Preset",
+        options=preset_keys,
+        index=0,
+        format_func=lambda x: preset_labels[x],
+    )
+
+    if preset_key == "custom":
+        selected_features = st.sidebar.multiselect(
+            "Custom features",
+            options=all_available_features,
+            default=[
+                f for f in default_custom_features
+                if f in all_available_features
+            ],
+            format_func=get_track_page_display_label,
+        )
+    else:
+        selected_features = []
+
+    st.sidebar.markdown("---")
+
+    with st.sidebar.expander("Advanced density controls", expanded=False):
+        bins = st.slider(
+            "Bins",
+            min_value=40,
+            max_value=120,
+            value=80,
+            step=10,
+        )
+        smooth_window = st.slider(
+            "Smoothing window",
+            min_value=3,
+            max_value=21,
+            value=11,
+            step=2,
+        )
+        min_group_n = st.slider(
+            "Minimum group size",
+            min_value=5,
+            max_value=100,
+            value=10,
+            step=5,
+        )
+
+    show_order_table = st.sidebar.checkbox(
+        "Show ordering table",
+        value=True,
+    )
+    show_density_table = st.sidebar.checkbox(
+        "Show density dataframe sample",
+        value=False,
+    )
+    show_ridge_long_sample = st.sidebar.checkbox(
+        "Show ridge_long sample",
+        value=False,
+    )
+
+    return {
+        "target_col": target_col,
+        "preset_key": preset_key,
+        "selected_features": selected_features,
+        "bins": bins,
+        "smooth_window": smooth_window,
+        "min_group_n": min_group_n,
+        "show_order_table": show_order_table,
+        "show_density_table": show_density_table,
+        "show_ridge_long_sample": show_ridge_long_sample,
+    }
+
+# Page 42 Controls
+def get_track_regression_controls(
+    target_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Regression Explorer.
+
+    Args:
+        target_options: Available track regression target columns.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Regression Controls")
+
+    target_col = st.sidebar.selectbox(
+        "Target",
+        options=target_options,
+        index=0,
+        format_func=get_track_page_display_label,
+    )
+
+    threshold = st.sidebar.slider(
+        "Continuous feature screening threshold",
+        min_value=0.00,
+        max_value=0.20,
+        value=0.05,
+        step=0.01,
+    )
+
+    include_context_controls = st.sidebar.checkbox(
+        "Include film & album controls",
+        value=True,
+        help=(
+            "When enabled, the model includes contextual film and album variables "
+            "such as film exposure and album structure, so track effects are "
+            "estimated after controlling for that broader context."
+        ),
+    )
+
+    show_coefficient_table = st.sidebar.checkbox(
+        "Show coefficient table",
+        value=True,
+    )
+    show_filter_summary = st.sidebar.checkbox(
+        "Show filter summary",
+        value=False,
+    )
+    show_transform_summary = st.sidebar.checkbox(
+        "Show transform summary",
+        value=False,
+    )
+    show_finalize_summary = st.sidebar.checkbox(
+        "Show finalize summary",
+        value=False,
+    )
+    show_model_summary = st.sidebar.checkbox(
+        "Show full model summary",
+        value=False,
+    )
+
+    return {
+        "target_col": target_col,
+        "threshold": threshold,
+        "include_context_controls": include_context_controls,
+        "show_coefficient_table": show_coefficient_table,
+        "show_filter_summary": show_filter_summary,
+        "show_transform_summary": show_transform_summary,
+        "show_finalize_summary": show_finalize_summary,
+        "show_model_summary": show_model_summary,
     }

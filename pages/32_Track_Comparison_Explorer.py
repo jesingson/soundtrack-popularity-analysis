@@ -21,9 +21,9 @@ from app.explorer_shared import (
     get_track_group_options,
     get_clean_composer_options,
     rename_and_dedupe_for_display,
+    get_track_page_display_label,
 )
-
-from app.ui import apply_app_styles, get_display_label
+from app.ui import apply_app_styles
 
 
 DETAIL_COLUMNS = [
@@ -228,8 +228,8 @@ def build_context_caption(
     min_group_size: int,
     ranking_stat: str | None,
 ) -> str:
-    metric_label = get_display_label(metric)
-    group_label = get_display_label(group_var).lower()
+    metric_label = get_track_page_display_label(metric)
+    group_label = get_track_page_display_label(group_var).lower()
 
     if selected_groups:
         if len(selected_groups) <= 5:
@@ -349,9 +349,9 @@ def create_boxplot_chart(
     - separate row-level tooltip for outlier points
     """
     y_title = (
-        f"log10({get_display_label(metric)})"
+        f"log10({get_track_page_display_label(metric)})"
         if use_log
-        else get_display_label(metric)
+        else get_track_page_display_label(metric)
     )
 
     summary_rows = []
@@ -419,7 +419,7 @@ def create_boxplot_chart(
         .encode(
             x=alt.X(
                 "group:N",
-                title=get_display_label(group_var),
+                title=get_track_page_display_label(group_var),
                 sort=group_order,
                 axis=alt.Axis(labelAngle=-35),
             ),
@@ -462,7 +462,7 @@ def create_boxplot_chart(
         .encode(
             x=alt.X(
                 "group:N",
-                title=get_display_label(group_var),
+                title=get_track_page_display_label(group_var),
                 sort=group_order,
                 axis=alt.Axis(labelAngle=-35),
             ),
@@ -487,7 +487,7 @@ def create_boxplot_chart(
             x=alt.X("group:N", sort=group_order),
             y=alt.Y("median_value:Q"),
             tooltip=[
-                alt.Tooltip("group:N", title=get_display_label(group_var)),
+                alt.Tooltip("group:N", title=get_track_page_display_label(group_var)),
                 alt.Tooltip("count:Q", title="Tracks", format=",.0f"),
                 alt.Tooltip("lower_whisker:Q", title="Lower Whisker", format=",.3f"),
                 alt.Tooltip("q1_value:Q", title="Q1", format=",.3f"),
@@ -500,7 +500,7 @@ def create_boxplot_chart(
 
     if not outlier_df.empty:
         tooltip_fields = [
-            alt.Tooltip("group:N", title=get_display_label(group_var)),
+            alt.Tooltip("group:N", title=get_track_page_display_label(group_var)),
         ]
 
         if metric in outlier_df.columns:
@@ -515,7 +515,7 @@ def create_boxplot_chart(
             tooltip_fields.append(
                 alt.Tooltip(
                     f"{metric}:Q",
-                    title=get_display_label(metric),
+                    title=get_track_page_display_label(metric),
                     format=metric_format,
                 )
             )
@@ -560,7 +560,7 @@ def create_boxplot_chart(
         width=750,
         height=450,
         title={
-            "text": f"{get_display_label(metric)} by {get_display_label(group_var)}",
+            "text": f"{get_track_page_display_label(metric)} by {get_track_page_display_label(group_var)}",
             "subtitle": [
                 "Boxplot comparison across groups"
                 + (" on log10 scale" if use_log else "")
@@ -575,7 +575,7 @@ def create_strip_overlay(
 ) -> alt.Chart:
     """Create a jittered strip overlay of individual track points."""
     tooltip_fields = [
-        alt.Tooltip("group:N", title=get_display_label(group_var)),
+        alt.Tooltip("group:N", title=get_track_page_display_label(group_var)),
         alt.Tooltip("value:Q", title="Displayed Value", format=",.3f"),
     ]
 
@@ -613,9 +613,9 @@ def create_violin_chart(
     group_order = summary_df["group"].tolist()
 
     y_title = (
-        f"log10({get_display_label(metric)})"
+        f"log10({get_track_page_display_label(metric)})"
         if use_log
-        else get_display_label(metric)
+        else get_track_page_display_label(metric)
     )
 
     fig = go.Figure()
@@ -637,7 +637,7 @@ def create_violin_chart(
                 line=dict(width=1),
                 spanmode="soft",
                 hovertemplate=(
-                    f"{get_display_label(group_var)}: {group_name}<br>"
+                    f"{get_track_page_display_label(group_var)}: {group_name}<br>"
                     "Displayed Value: %{y:,.3f}<extra></extra>"
                 ),
                 showlegend=False,
@@ -646,10 +646,10 @@ def create_violin_chart(
 
     fig.update_layout(
         title=(
-            f"{get_display_label(metric)} by {get_display_label(group_var)}"
-            + (" (log10 scale)" if use_log else "")
+                f"{get_track_page_display_label(metric)} by {get_track_page_display_label(group_var)}"
+                + (" (log10 scale)" if use_log else "")
         ),
-        xaxis_title=get_display_label(group_var),
+        xaxis_title=get_track_page_display_label(group_var),
         yaxis_title=y_title,
         violingap=0.15,
         violinmode="overlay",
@@ -670,16 +670,16 @@ def create_bar_ranking_chart(
 ) -> alt.Chart:
     stat_col = get_view_metric_column(ranking_stat)
 
-    x_title = "Track Count" if ranking_stat == "Count" else f"{ranking_stat} {get_display_label(metric)}"
+    x_title = "Track Count" if ranking_stat == "Count" else f"{ranking_stat} {get_track_page_display_label(metric)}"
 
     return (
         alt.Chart(summary_df.sort_values(stat_col, ascending=False))
         .mark_bar()
         .encode(
             x=alt.X(f"{stat_col}:Q", title=x_title),
-            y=alt.Y("group:N", sort="-x", title=get_display_label(group_var)),
+            y=alt.Y("group:N", sort="-x", title=get_track_page_display_label(group_var)),
             tooltip=[
-                alt.Tooltip("group:N", title=get_display_label(group_var)),
+                alt.Tooltip("group:N", title=get_track_page_display_label(group_var)),
                 alt.Tooltip("count:Q", title="Tracks", format=",.0f"),
                 alt.Tooltip("median:Q", title="Median", format=",.3f"),
                 alt.Tooltip("mean:Q", title="Mean", format=",.3f"),
@@ -688,7 +688,7 @@ def create_bar_ranking_chart(
         )
         .properties(
             height=max(320, min(700, 40 * len(summary_df))),
-            title=f"{ranking_stat} {get_display_label(metric)} by {get_display_label(group_var)}" if ranking_stat != "Count" else f"Track Count by {get_display_label(group_var)}",
+            title=f"{ranking_stat} {get_track_page_display_label(metric)} by {get_track_page_display_label(group_var)}" if ranking_stat != "Count" else f"Track Count by {get_track_page_display_label(group_var)}",
         )
     )
 
@@ -708,7 +708,7 @@ def build_supporting_table(
     source_cols = ["group", "value"] + detail_cols
     source_cols = [col for col in source_cols if col in plot_df.columns]
     table_df = plot_df[source_cols].copy()
-    table_df = table_df.rename(columns={"group": get_display_label(group_var), "value": "Displayed Value"})
+    table_df = table_df.rename(columns={"group": get_track_page_display_label(group_var), "value": "Displayed Value"})
     return rename_and_dedupe_for_display(table_df.head(200))
 
 def build_comparison_supporting_insight(
@@ -722,8 +722,8 @@ def build_comparison_supporting_insight(
     if summary_df.empty:
         return "No visible comparison remains."
 
-    metric_label = get_display_label(metric).lower()
-    group_label = get_display_label(group_var).lower()
+    metric_label = get_track_page_display_label(metric).lower()
+    group_label = get_track_page_display_label(group_var).lower()
 
     if view_mode in {"Boxplot", "Violin"}:
         top_median_row = summary_df.sort_values(
@@ -783,8 +783,24 @@ def main() -> None:
     filter_inputs = get_global_filter_inputs(track_df)
     composer_options = get_clean_composer_options(track_df)
 
-    metric_options = get_track_numeric_options(track_df)
-    group_options = get_track_group_options(track_df)
+    st.sidebar.header("Track Comparison Controls")
+    include_context_features = st.sidebar.checkbox(
+        "Include film & album context",
+        value=False,
+        help=(
+            "Adds film- and album-level grouping and metric options while keeping "
+            "track-native options first."
+        ),
+    )
+
+    metric_options = get_track_numeric_options(
+        track_df,
+        include_context_features=include_context_features,
+    )
+    group_options = get_track_group_options(
+        track_df,
+        include_context_features=include_context_features,
+    )
 
     group_value_options_map: dict[str, list[str]] = {}
     for group_col in group_options:
@@ -813,6 +829,8 @@ def main() -> None:
         group_value_options_map=group_value_options_map,
         composer_options=composer_options,
     )
+
+    controls["include_context_features"] = include_context_features
 
     filtered_df = filter_track_comparison_df(
         track_df=track_df,

@@ -16,10 +16,11 @@ from app.explorer_shared import (
     add_standard_multivalue_groups,
     get_clean_composer_options,
     get_global_filter_inputs,
-    rename_and_dedupe_for_display,
+    get_track_page_display_label,
+    rename_track_page_columns_for_display,
     select_unique_existing_columns,
 )
-from app.ui import apply_app_styles, get_display_label
+from app.ui import apply_app_styles
 
 
 TRACK_SUCCESS_ANCHORS = [
@@ -28,7 +29,7 @@ TRACK_SUCCESS_ANCHORS = [
     "spotify_popularity",
 ]
 
-TRACK_PREDICTOR_FEATURES = [
+TRACK_TRACK_LEVEL_PREDICTORS = [
     "energy",
     "danceability",
     "happiness",
@@ -42,7 +43,70 @@ TRACK_PREDICTOR_FEATURES = [
     "relative_track_position",
 ]
 
-TRACK_CORRELATION_FEATURES = TRACK_SUCCESS_ANCHORS + TRACK_PREDICTOR_FEATURES
+TRACK_AUDIO_PREDICTORS = [
+    "energy",
+    "danceability",
+    "happiness",
+    "acousticness",
+    "instrumentalness",
+    "speechiness",
+    "liveness",
+    "tempo",
+    "loudness",
+    "duration_seconds",
+]
+
+TRACK_STRUCTURE_PREDICTORS = [
+    "relative_track_position",
+]
+
+TRACK_CONTEXT_CONTINUOUS_PREDICTORS = [
+    "film_year",
+    "film_vote_count",
+    "film_popularity",
+    "film_rating",
+    "film_runtime_min",
+    "days_since_film_release",
+    "n_tracks",
+    "album_release_lag_days",
+    "composer_album_count",
+    "album_cohesion_score",
+]
+
+TRACK_CONTEXT_BINARY_PREDICTORS = [
+    "film_is_action",
+    "film_is_adventure",
+    "film_is_animation",
+    "film_is_comedy",
+    "film_is_crime",
+    "film_is_documentary",
+    "film_is_drama",
+    "film_is_family",
+    "film_is_fantasy",
+    "film_is_history",
+    "film_is_horror",
+    "film_is_music",
+    "film_is_mystery",
+    "film_is_romance",
+    "film_is_science_fiction",
+    "film_is_tv_movie",
+    "film_is_thriller",
+    "film_is_war",
+    "film_is_western",
+    "ambient_experimental",
+    "classical_orchestral",
+    "electronic",
+    "hip_hop_rnb",
+    "pop",
+    "rock",
+    "world_folk",
+    "bafta_nominee",
+]
+
+TRACK_CONTEXT_PREDICTORS = (
+    TRACK_CONTEXT_CONTINUOUS_PREDICTORS
+    + TRACK_CONTEXT_BINARY_PREDICTORS
+)
 
 CORE_AUDIO_REQUIRED_COLS = [
     "energy",
@@ -63,9 +127,13 @@ SOURCE_DISPLAY_COLUMNS = [
     "film_year",
     "film_genres",
     "album_genres_display",
+
+    # track success anchors
     "lfm_track_listeners",
     "lfm_track_playcount",
     "spotify_popularity",
+
+    # track-level predictors
     "energy",
     "danceability",
     "happiness",
@@ -76,6 +144,18 @@ SOURCE_DISPLAY_COLUMNS = [
     "tempo",
     "loudness",
     "duration_seconds",
+
+    # film / album context
+    "film_vote_count",
+    "film_popularity",
+    "film_rating",
+    "film_runtime_min",
+    "days_since_film_release",
+    "n_tracks",
+    "album_release_lag_days",
+    "composer_album_count",
+    "album_cohesion_score",
+    "bafta_nominee",
 ]
 
 
@@ -158,7 +238,7 @@ def build_filter_context_caption(controls: dict) -> str:
 
     parts.append(f"Max track position: {controls['max_track_position']}")
     parts.append(f"Method: {controls['method'].title()}")
-    parts.append(f"Anchor: {get_display_label(controls['anchor_metric'])}")
+    parts.append(f"Anchor: {get_track_page_display_label(controls['anchor_metric'])}")
 
     if controls["audio_only"]:
         parts.append("Only tracks with core audio features")
@@ -166,9 +246,43 @@ def build_filter_context_caption(controls: dict) -> str:
     return " | ".join(parts)
 
 
-def get_available_correlation_features(df: pd.DataFrame) -> list[str]:
-    """Return the correlation feature subset available in the dataframe."""
-    return [col for col in TRACK_CORRELATION_FEATURES if col in df.columns]
+def get_visible_correlation_feature_sets(
+    df: pd.DataFrame,
+    include_context_features: bool,
+) -> dict:
+    """
+    Return the visible feature sets for the page.
+
+    This keeps track-level predictors isolated while optionally allowing
+    film/album context into the heatmap and ranked-association views.
+    """
+    anchor_features = [
+        col for col in TRACK_SUCCESS_ANCHORS
+        if col in df.columns
+    ]
+
+    track_predictors = [
+        col for col in TRACK_TRACK_LEVEL_PREDICTORS
+        if col in df.columns
+    ]
+
+    context_predictors = []
+    if include_context_features:
+        context_predictors = [
+            col for col in TRACK_CONTEXT_PREDICTORS
+            if col in df.columns
+        ]
+
+    all_predictors = track_predictors + context_predictors
+    feature_cols = anchor_features + all_predictors
+
+    return {
+        "anchor_features": anchor_features,
+        "track_predictors": track_predictors,
+        "context_predictors": context_predictors,
+        "all_predictors": all_predictors,
+        "feature_cols": feature_cols,
+    }
 
 
 def build_numeric_correlation_df(
@@ -208,22 +322,54 @@ def compute_correlation_matrix(
 def restrict_heatmap_scope(
     corr_matrix: pd.DataFrame,
     heatmap_scope: str,
+    anchor_cols: list[str],
+    track_predictor_cols: list[str],
+    context_predictor_cols: list[str],
 ) -> pd.DataFrame:
-    """Optionally restrict the heatmap to predictor features only."""
+    """Restrict the heatmap to the requested feature family."""
     if corr_matrix.empty:
         return corr_matrix
 
-    if heatmap_scope != "Predictors only":
+    def keep_existing(cols: list[str]) -> list[str]:
+        return [
+            col for col in cols
+            if col in corr_matrix.index and col in corr_matrix.columns
+        ]
+
+    if heatmap_scope == "All visible features":
         return corr_matrix
 
-    predictor_cols = [
-        col for col in TRACK_PREDICTOR_FEATURES
-        if col in corr_matrix.index and col in corr_matrix.columns
-    ]
-    if len(predictor_cols) < 2:
+    elif heatmap_scope == "Success anchors only":
+        keep = keep_existing(anchor_cols)
+
+    elif heatmap_scope == "Track audio predictors":
+        keep = keep_existing(TRACK_AUDIO_PREDICTORS)
+
+    elif heatmap_scope == "Track structure predictors":
+        keep = keep_existing(TRACK_STRUCTURE_PREDICTORS)
+
+    elif heatmap_scope == "All track predictors":
+        keep = keep_existing(track_predictor_cols)
+
+    elif heatmap_scope == "Context continuous":
+        keep = keep_existing(TRACK_CONTEXT_CONTINUOUS_PREDICTORS)
+
+    elif heatmap_scope == "Context binary":
+        keep = keep_existing(TRACK_CONTEXT_BINARY_PREDICTORS)
+
+    elif heatmap_scope == "All context predictors":
+        keep = keep_existing(context_predictor_cols)
+
+    elif heatmap_scope == "All predictors":
+        keep = keep_existing(track_predictor_cols + context_predictor_cols)
+
+    else:
         return corr_matrix
 
-    return corr_matrix.loc[predictor_cols, predictor_cols].copy()
+    if len(keep) < 2:
+        return pd.DataFrame()
+
+    return corr_matrix.loc[keep, keep].copy()
 
 
 def corr_to_long(corr_matrix: pd.DataFrame) -> pd.DataFrame:
@@ -280,10 +426,11 @@ def build_anchor_ranking_df(
 
 def build_predictor_redundancy_df(
     corr_matrix: pd.DataFrame,
+    predictor_cols: list[str],
 ) -> pd.DataFrame:
     """Build a ranked table of strongest predictor-predictor correlations."""
     predictor_cols = [
-        col for col in TRACK_PREDICTOR_FEATURES
+        col for col in predictor_cols
         if col in corr_matrix.index and col in corr_matrix.columns
     ]
     if len(predictor_cols) < 2:
@@ -345,10 +492,11 @@ def classify_correlation_strength(value: float) -> str:
 
 def get_least_connected_predictor(
     corr_matrix: pd.DataFrame,
+    predictor_cols: list[str],
 ) -> tuple[str, float] | None:
     """Return the predictor with the weakest average absolute correlation."""
     predictor_cols = [
-        col for col in TRACK_PREDICTOR_FEATURES
+        col for col in predictor_cols
         if col in corr_matrix.index and col in corr_matrix.columns
     ]
     if len(predictor_cols) < 2:
@@ -389,7 +537,7 @@ def build_archetype_opportunity_text(
         family = "a possible shared track-character dimension"
 
     return (
-        f"{get_display_label(f1)} and {get_display_label(f2)} move together strongly "
+        f"{get_track_page_display_label(f1)} and {get_track_page_display_label(f2)} move together strongly "
         f"(|r| = {abs_corr:.2f}), suggesting {family} that could later be turned "
         f"into an archetype lens on other track pages."
     )
@@ -398,17 +546,25 @@ def build_archetype_opportunity_text(
 def build_view_context_caption(
     controls: dict,
     filtered_df: pd.DataFrame,
-    feature_cols: list[str],
+    feature_sets: dict,
 ) -> str:
     """Build a natural-language scope caption for the page."""
-    predictor_count = len([col for col in feature_cols if col in TRACK_PREDICTOR_FEATURES])
-    anchor_count = len([col for col in feature_cols if col in TRACK_SUCCESS_ANCHORS])
+    track_predictor_count = len(feature_sets["track_predictors"])
+    context_predictor_count = len(feature_sets["context_predictors"])
+    anchor_count = len(feature_sets["anchor_features"])
+
+    context_phrase = (
+        f"{context_predictor_count} film/album context predictors included"
+        if controls["include_context_features"]
+        else "film/album context hidden"
+    )
 
     return (
         f"Using {controls['method'].title()} correlation across {len(filtered_df):,} visible tracks, "
-        f"with {anchor_count} success anchors and {predictor_count} candidate predictors. "
-        f"The ranked view is anchored to {get_display_label(controls['anchor_metric'])}, "
-        f"and the heatmap scope is set to {controls['heatmap_scope'].lower()}."
+        f"with {anchor_count} success anchors, {track_predictor_count} track-level predictors, and "
+        f"{context_phrase}. The ranked view is anchored to "
+        f"{get_track_page_display_label(controls['anchor_metric'])}, and the heatmap is scoped to "
+        f"{controls['heatmap_scope'].lower()}."
     )
 
 
@@ -437,8 +593,8 @@ def build_heatmap_supporting_insight(
 
     return (
         f"💡 The strongest visible off-diagonal relationship is between "
-        f"**{get_display_label(str(top_pair['feature_x']))}** and "
-        f"**{get_display_label(str(top_pair['feature_y']))}** "
+        f"**{get_track_page_display_label(str(top_pair['feature_x']))}** and "
+        f"**{get_track_page_display_label(str(top_pair['feature_y']))}** "
         f"(r = {top_pair['correlation']:.2f}), which is {strength.lower()}."
     )
 
@@ -454,7 +610,7 @@ def build_anchor_supporting_insight(
         return "💡 No ranked relationships remain under the current settings."
 
     top_row = ranking_df.iloc[0]
-    feature = get_display_label(str(top_row["feature"]))
+    feature = get_track_page_display_label(str(top_row["feature"]))
     corr_value = float(top_row["correlation"])
     strength = classify_correlation_strength(corr_value).lower()
     direction = "positive" if corr_value > 0 else "negative"
@@ -468,7 +624,7 @@ def build_anchor_supporting_insight(
 
     return (
         f"💡 {prefix}, **{feature}** has the strongest {method.title()} association "
-        f"with **{get_display_label(anchor_metric)}** "
+                f"with **{get_track_page_display_label(anchor_metric)}** "
         f"(r = {corr_value:.2f}), which is a {strength} {direction} relationship."
     )
 
@@ -481,8 +637,8 @@ def build_redundancy_supporting_insight(
         return "💡 Not enough predictor features remain to screen for redundancy."
 
     top_row = redundancy_df.iloc[0]
-    f1 = get_display_label(str(top_row["feature_1"]))
-    f2 = get_display_label(str(top_row["feature_2"]))
+    f1 = get_track_page_display_label(str(top_row["feature_1"]))
+    f2 = get_track_page_display_label(str(top_row["feature_2"]))
     abs_corr = float(top_row["abs_correlation"])
     risk_band = str(top_row["risk_band"])
 
@@ -498,6 +654,7 @@ def build_insight_cards(
     redundancy_df: pd.DataFrame,
     corr_matrix: pd.DataFrame,
     anchor_metric: str,
+    predictor_cols: list[str],
 ) -> list[tuple[str, str, str]]:
     """Build the three top-line insight cards."""
     cards: list[tuple[str, str, str]] = []
@@ -507,8 +664,8 @@ def build_insight_cards(
         cards.append(
             (
                 "Strongest Success Signal",
-                get_display_label(str(top_anchor["feature"])),
-                f"r = {top_anchor['correlation']:.2f} vs {get_display_label(anchor_metric)}",
+                get_track_page_display_label(str(top_anchor["feature"])),
+                f"r = {top_anchor['correlation']:.2f} vs {get_track_page_display_label(anchor_metric)}",
             )
         )
     else:
@@ -525,7 +682,7 @@ def build_insight_cards(
         cards.append(
             (
                 "Top Archetype Opportunity",
-                f"{get_display_label(str(top_pair['feature_1']))} + {get_display_label(str(top_pair['feature_2']))}",
+                f"{get_track_page_display_label(str(top_pair['feature_1']))} + {get_track_page_display_label(str(top_pair['feature_2']))}",
                 f"|r| = {top_pair['abs_correlation']:.2f}",
             )
         )
@@ -538,13 +695,13 @@ def build_insight_cards(
             )
         )
 
-    weakest = get_least_connected_predictor(corr_matrix)
+    weakest = get_least_connected_predictor(corr_matrix, predictor_cols=predictor_cols)
     if weakest is not None:
         weakest_feature, weakest_avg = weakest
         cards.append(
             (
                 "Least Connected Predictor",
-                get_display_label(weakest_feature),
+                get_track_page_display_label(weakest_feature),
                 f"Avg |r| = {weakest_avg:.2f}",
             )
         )
@@ -563,8 +720,16 @@ def build_insight_cards(
 def create_heatmap_chart(corr_matrix: pd.DataFrame) -> alt.Chart:
     """Create an Altair heatmap from the correlation matrix."""
     display_matrix = corr_matrix.copy()
-    display_matrix.index = [get_display_label(str(col)) for col in display_matrix.index]
-    display_matrix.columns = [get_display_label(str(col)) for col in display_matrix.columns]
+    display_matrix.index = [get_track_page_display_label(str(col)) for col in display_matrix.index]
+    display_matrix.columns = [get_track_page_display_label(str(col)) for col in display_matrix.columns]
+
+    n_features = len(display_matrix.columns)
+    chart_height = max(420, min(1100, 38 * n_features))
+    chart_width = max(420, min(1100, 38 * n_features))
+
+    long_df = corr_to_long(display_matrix)
+    display_matrix.index = [get_track_page_display_label(str(col)) for col in display_matrix.index]
+    display_matrix.columns = [get_track_page_display_label(str(col)) for col in display_matrix.columns]
 
     long_df = corr_to_long(display_matrix)
 
@@ -586,7 +751,8 @@ def create_heatmap_chart(corr_matrix: pd.DataFrame) -> alt.Chart:
             ],
         )
         .properties(
-            height=600,
+            width=chart_width,
+            height=chart_height,
             title="Track Correlation Heatmap",
         )
         .configure_axisX(
@@ -610,7 +776,7 @@ def create_anchor_ranking_chart(
 ) -> alt.Chart:
     """Create a bar chart of ranked anchor associations."""
     plot_df = ranking_df.copy()
-    plot_df["feature_label"] = plot_df["feature"].astype(str).map(get_display_label)
+    plot_df["feature_label"] = plot_df["feature"].astype(str).map(get_track_page_display_label)
 
     return (
         alt.Chart(plot_df)
@@ -630,7 +796,7 @@ def create_anchor_ranking_chart(
         )
         .properties(
             height=max(280, 34 * len(plot_df)),
-            title=f"Top Associations to {get_display_label(anchor_metric)}",
+            title=f"Top Associations to {get_track_page_display_label(anchor_metric)}",
         )
     )
 
@@ -642,9 +808,9 @@ def create_redundancy_chart(
     """Create a bar chart of strongest predictor-predictor correlations."""
     plot_df = redundancy_df.head(top_n).copy()
     plot_df["pair_label"] = (
-        plot_df["feature_1"].astype(str).map(get_display_label)
-        + " ↔ "
-        + plot_df["feature_2"].astype(str).map(get_display_label)
+            plot_df["feature_1"].astype(str).map(get_track_page_display_label)
+            + " ↔ "
+            + plot_df["feature_2"].astype(str).map(get_track_page_display_label)
     )
 
     return (
@@ -715,13 +881,30 @@ def main() -> None:
         **local_controls,
     }
 
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Feature Universe")
+    controls["include_context_features"] = st.sidebar.checkbox(
+        "Include film & album context",
+        value=False,
+        help=(
+            "Adds film- and album-level context predictors to the heatmap and ranked "
+            "association views while keeping the redundancy watchlist focused on "
+            "track-level predictors."
+        ),
+    )
+
     filtered_df = filter_track_correlation_dataset(track_df, controls)
 
     if filtered_df.empty:
         st.warning("No tracks remain under the current filters.")
         return
 
-    feature_cols = get_available_correlation_features(filtered_df)
+    feature_sets = get_visible_correlation_feature_sets(
+        filtered_df,
+        include_context_features=controls["include_context_features"],
+    )
+    feature_cols = feature_sets["feature_cols"]
+
     numeric_df = build_numeric_correlation_df(filtered_df, feature_cols)
     corr_matrix = compute_correlation_matrix(
         numeric_df=numeric_df,
@@ -735,6 +918,9 @@ def main() -> None:
     heatmap_matrix = restrict_heatmap_scope(
         corr_matrix=corr_matrix,
         heatmap_scope=controls["heatmap_scope"],
+        anchor_cols=feature_sets["anchor_features"],
+        track_predictor_cols=feature_sets["track_predictors"],
+        context_predictor_cols=feature_sets["context_predictors"],
     )
 
     ranking_df = build_anchor_ranking_df(
@@ -746,7 +932,10 @@ def main() -> None:
     if not ranking_df.empty:
         ranking_df["anchor_metric"] = controls["anchor_metric"]
 
-    redundancy_df = build_predictor_redundancy_df(corr_matrix)
+    redundancy_df = build_predictor_redundancy_df(
+        corr_matrix,
+        predictor_cols=feature_sets["track_predictors"],
+    )
 
     st.markdown("**Filter Context**")
     st.caption(build_filter_context_caption(controls))
@@ -756,24 +945,24 @@ def main() -> None:
         build_view_context_caption(
             controls=controls,
             filtered_df=filtered_df,
-            feature_cols=feature_cols,
+            feature_sets=feature_sets,
         )
     )
 
     track_count = len(filtered_df)
     feature_count = len(feature_cols)
-    usable_predictor_count = len(
-        [col for col in TRACK_PREDICTOR_FEATURES if col in corr_matrix.columns]
-    )
+    track_predictor_count = len(feature_sets["track_predictors"])
+    context_predictor_count = len(feature_sets["context_predictors"])
     high_risk_pairs = int((redundancy_df["abs_correlation"] >= 0.80).sum()) if not redundancy_df.empty else 0
     moderate_plus_pairs = int((redundancy_df["abs_correlation"] >= 0.65).sum()) if not redundancy_df.empty else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Visible Tracks", f"{track_count:,}")
     c2.metric("Correlation Features", f"{feature_count:,}")
-    c3.metric("Predictor Features", f"{usable_predictor_count:,}")
-    c4.metric("Very High-Risk Pairs", f"{high_risk_pairs:,}")
-    c5.metric("Moderate+ Redundancy Pairs", f"{moderate_plus_pairs:,}")
+    c3.metric("Track Predictors", f"{track_predictor_count:,}")
+    c4.metric("Context Predictors", f"{context_predictor_count:,}")
+    c5.metric("Very High-Risk Track Pairs", f"{high_risk_pairs:,}")
+    c6.metric("Moderate+ Track Pairs", f"{moderate_plus_pairs:,}")
 
     st.markdown("### 🧠 Key Insights")
     insight_cards = build_insight_cards(
@@ -781,6 +970,7 @@ def main() -> None:
         redundancy_df=redundancy_df,
         corr_matrix=corr_matrix,
         anchor_metric=controls["anchor_metric"],
+        predictor_cols=feature_sets["track_predictors"],
     )
     insight_cols = st.columns(3)
     for i, (title, value, caption) in enumerate(insight_cards):
@@ -790,11 +980,18 @@ def main() -> None:
 
     st.markdown("### Correlation Heatmap")
     st.caption(
-        "Use the matrix to identify broad relationship structure, promising archetype families, "
-        "and highly redundant predictor clusters."
+        "Use the heatmap scope to focus on a specific predictor family rather than forcing all variables "
+        "into one oversized matrix. Larger scopes automatically render taller for readability."
     )
-    st.altair_chart(create_heatmap_chart(heatmap_matrix), width="stretch")
-    st.caption(build_heatmap_supporting_insight(heatmap_matrix))
+
+    if heatmap_matrix.empty or heatmap_matrix.shape[0] < 2:
+        st.info(
+            "The selected heatmap scope does not have enough visible variables under the current settings. "
+            "Try switching the heatmap scope or enabling film & album context."
+        )
+    else:
+        st.altair_chart(create_heatmap_chart(heatmap_matrix), width="stretch")
+        st.caption(build_heatmap_supporting_insight(heatmap_matrix))
 
     st.divider()
 
@@ -824,7 +1021,7 @@ def main() -> None:
 
         if controls["show_ranked_table"]:
             ranked_display = ranking_df.copy()
-            ranked_display["feature"] = ranked_display["feature"].astype(str).map(get_display_label)
+            ranked_display["feature"] = ranked_display["feature"].astype(str).map(get_track_page_display_label)
             ranked_display = ranked_display.rename(
                 columns={
                     "feature": "Feature",
@@ -833,7 +1030,8 @@ def main() -> None:
                     "anchor_metric": "Anchor Metric",
                 }
             )
-            ranked_display["Anchor Metric"] = ranked_display["Anchor Metric"].astype(str).map(get_display_label)
+            ranked_display["Anchor Metric"] = ranked_display["Anchor Metric"].astype(str).map(
+                get_track_page_display_label)
             st.dataframe(ranked_display, width="stretch", hide_index=True)
 
     st.divider()
@@ -853,8 +1051,10 @@ def main() -> None:
 
         if controls["show_redundancy_table"]:
             redundancy_display = redundancy_df.copy()
-            redundancy_display["feature_1"] = redundancy_display["feature_1"].astype(str).map(get_display_label)
-            redundancy_display["feature_2"] = redundancy_display["feature_2"].astype(str).map(get_display_label)
+            redundancy_display["feature_1"] = redundancy_display["feature_1"].astype(str).map(
+                get_track_page_display_label)
+            redundancy_display["feature_2"] = redundancy_display["feature_2"].astype(str).map(
+                get_track_page_display_label)
             redundancy_display = redundancy_display.rename(
                 columns={
                     "feature_1": "Feature 1",
@@ -874,8 +1074,25 @@ def main() -> None:
             filtered_df,
             get_safe_source_display_columns(filtered_df),
         )
-        display_df = rename_and_dedupe_for_display(filtered_df[source_cols].copy())
+        display_df = rename_track_page_columns_for_display(
+            filtered_df[source_cols].copy()
+        )
         st.dataframe(display_df, width="stretch", hide_index=True)
+
+    st.markdown("### 📈 Modeling Takeaway")
+    st.write(
+        """
+        No single track feature strongly explains playcount on its own, but multiple 
+        features show consistent directional relationships with the target. At the same 
+        time, several predictors move closely together, indicating shared structure rather 
+        than independent signals.
+
+        This combination — distributed signal and correlated predictors — is well-suited 
+        to regression modeling. It suggests that performance is shaped by multiple interacting 
+        factors, and that techniques like regularization will be important to balance 
+        signal capture with redundancy control.
+        """
+    )
 
     st.caption(
         "These are descriptive pairwise associations. Strong relationships can suggest "
