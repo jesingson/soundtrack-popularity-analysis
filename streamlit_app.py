@@ -80,6 +80,10 @@ navigation = st.navigation(
                 "pages/33_Track_Relationship_Explorer.py",
                 title="Track Relationship Explorer",
             ),
+            st.Page(
+                "pages/34_Track_Ecosystem_Explorer.py",
+                title="Track Ecosystem Explorer",
+            ),
         ],
         "🟨 Album–Track Analysis": [
             st.Page(

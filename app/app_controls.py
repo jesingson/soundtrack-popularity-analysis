@@ -1982,6 +1982,142 @@ def get_track_relationship_controls(
         "show_data_table": show_data_table,
     }
 
+# Page 34 Controls
+def get_track_ecosystem_controls(
+    composer_options: list[str],
+) -> dict:
+    """
+    Render sidebar controls for the Track Ecosystem Explorer.
+
+    Args:
+        composer_options: Available composer values.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Track Ecosystem Controls")
+
+    ecosystem_mode = st.sidebar.radio(
+        "Archetype universe",
+        options=[
+            "Core archetype bands",
+            "Core archetypes + boolean flags",
+        ],
+        index=0,
+        help=(
+            "Core archetype bands uses the three banded archetype families. "
+            "The expanded mode also includes simple boolean flags like "
+            "Instrumental and High Energy."
+        ),
+    )
+
+    pair_metric = st.sidebar.selectbox(
+        "Pair metric",
+        options=["Lift vs Random", "Lift", "Count", "% of albums"],
+        index=0,
+        help=(
+            "Lift highlights pairings that appear together more often than expected. "
+            "Count emphasizes raw prevalence. % of albums shows visible penetration."
+        ),
+    )
+
+    min_album_count = st.sidebar.slider(
+        "Minimum albums with pair",
+        min_value=1,
+        max_value=25,
+        value=2,
+        step=1,
+        help="Hide weak archetype pairs below this album count threshold.",
+    )
+
+    min_lift = st.sidebar.slider(
+        "Minimum lift",
+        min_value=1.00,
+        max_value=1.20,
+        value=1.02,
+        step=0.01,
+        help=(
+            "Hide archetype pairs whose lift is too close to 1.00. "
+            "Lift near 1.00 means the pairing occurs about as often as expected by chance."
+        ),
+    )
+
+    top_n_pairs = st.sidebar.slider(
+        "Top ranked pairs",
+        min_value=5,
+        max_value=25,
+        value=10,
+        step=1,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Track Filters")
+
+    selected_composers = st.sidebar.multiselect(
+        "Composers",
+        options=composer_options,
+        default=[],
+    )
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with core audio features",
+        value=True,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Tables")
+
+    show_pair_table = st.sidebar.checkbox(
+        "Show pair summary table",
+        value=True,
+    )
+
+    show_album_table = st.sidebar.checkbox(
+        "Show selected-pair album table",
+        value=True,
+    )
+
+    show_track_table = st.sidebar.checkbox(
+        "Show selected-pair track table",
+        value=False,
+    )
+
+    return {
+        "ecosystem_mode": ecosystem_mode,
+        "pair_metric": pair_metric,
+        "min_album_count": min_album_count,
+        "min_lift": min_lift,
+        "top_n_pairs": top_n_pairs,
+        "selected_composers": selected_composers,
+        "search_text": search_text,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+        "show_pair_table": show_pair_table,
+        "show_album_table": show_album_table,
+        "show_track_table": show_track_table,
+    }
+
 # Page 40 Controls
 def get_track_correlation_controls(
     composer_options: list[str],
