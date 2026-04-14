@@ -398,12 +398,12 @@ def get_group_comparison_controls(
         "genre_mode": genre_mode,
     }
 
-# PAGE 4 Controls
 def get_scatter_controls(
     guided_feature_options: list[str],
     freeform_numeric_options: list[str],
     color_options: list[str],
-    default_y: str,
+    default_x: str | None = None,
+    default_y: str | None = None,
 ) -> dict:
     """
     Render sidebar controls for the relationship explorer.
@@ -412,6 +412,7 @@ def get_scatter_controls(
         guided_feature_options: Ranked continuous features used in Guided mode.
         freeform_numeric_options: Numeric columns available for freeform X/Y.
         color_options: Optional categorical fields available for color encoding.
+        default_x: Default x-axis field for freeform mode.
         default_y: Default y-axis field for freeform mode.
 
     Returns:
@@ -456,7 +457,24 @@ def get_scatter_controls(
         jitter_strength = 0.0
 
     else:
-        default_x_index = 0
+        if not freeform_numeric_options:
+            raise ValueError("freeform_numeric_options cannot be empty.")
+
+        if default_x is None:
+            default_x = freeform_numeric_options[0]
+
+        if default_y is None:
+            default_y = (
+                freeform_numeric_options[1]
+                if len(freeform_numeric_options) > 1
+                else freeform_numeric_options[0]
+            )
+
+        default_x_index = (
+            freeform_numeric_options.index(default_x)
+            if default_x in freeform_numeric_options
+            else 0
+        )
         default_y_index = (
             freeform_numeric_options.index(default_y)
             if default_y in freeform_numeric_options
@@ -487,16 +505,27 @@ def get_scatter_controls(
         st.sidebar.markdown("---")
         st.sidebar.caption("Display and scale controls")
 
+        default_transform_x = (
+            "Log1p"
+            if x_col in {"lfm_album_listeners", "lfm_album_playcount"}
+            else "None"
+        )
+        default_transform_y = (
+            "Log1p"
+            if y_col in {"lfm_album_listeners", "lfm_album_playcount"}
+            else "None"
+        )
+
         transform_x = st.sidebar.selectbox(
             "Transform X",
             options=["None", "Log1p"],
-            index=0,
+            index=0 if default_transform_x == "None" else 1,
         )
 
         transform_y = st.sidebar.selectbox(
             "Transform Y",
             options=["None", "Log1p"],
-            index=0,
+            index=0 if default_transform_y == "None" else 1,
         )
 
         apply_jitter = st.sidebar.checkbox(

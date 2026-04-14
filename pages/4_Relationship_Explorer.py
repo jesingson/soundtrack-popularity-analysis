@@ -5,12 +5,17 @@ import streamlit as st
 
 import data_processing as dp
 import regression_analysis as reg
-from app.app_controls import get_scatter_controls
+from app.app_controls import (
+    get_global_filter_controls,
+    get_scatter_controls,
+)
 from app.app_data import (
     load_analysis_data,
     load_explorer_data,
     load_source_data,
 )
+from app.data_filters import filter_dataset
+from app.explorer_shared import get_global_filter_inputs
 from app.ui import (
     apply_app_styles,
     get_display_label,
@@ -1006,6 +1011,30 @@ def render_freeform_summary_metrics(
         "for X and Y and optional low-cardinality grouping for color."
     )
 
+def filter_album_analytics_to_visible_scope(
+    album_analytics_df: pd.DataFrame,
+    filtered_explorer_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Restrict the analysis dataframe to the albums visible in the filtered explorer scope.
+    """
+    merge_keys = [
+        col for col in ["release_group_mbid", "tmdb_id"]
+        if col in album_analytics_df.columns and col in filtered_explorer_df.columns
+    ]
+
+    if not merge_keys:
+        return album_analytics_df.copy()
+
+    visible_ids = filtered_explorer_df[merge_keys].drop_duplicates().copy()
+
+    filtered_album_analytics_df = album_analytics_df.merge(
+        visible_ids,
+        on=merge_keys,
+        how="inner",
+    )
+
+    return filtered_album_analytics_df
 
 def main() -> None:
     """
@@ -1033,8 +1062,39 @@ def main() -> None:
     album_analytics_df = load_analysis_data()
     explorer_source_df = load_explorer_data()
 
-    ranking_df = reg.build_scatterplot_feature_ranking(
+    explorer_df = build_relationship_explorer_df(
+        explorer_source_df=explorer_source_df,
+    )
+
+    filter_inputs = get_global_filter_inputs(explorer_df)
+
+    global_controls = get_global_filter_controls(
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
+    )
+
+    filtered_explorer_df = filter_dataset(
+        explorer_df,
+        global_controls,
+    ).copy()
+
+    if filtered_explorer_df.empty:
+        st.warning("No albums remain under the current global filters.")
+        return
+
+    filtered_album_analytics_df = filter_album_analytics_to_visible_scope(
         album_analytics_df=album_analytics_df,
+        filtered_explorer_df=filtered_explorer_df,
+    )
+
+    if filtered_album_analytics_df.empty:
+        st.warning("No analysis-ready albums remain after aligning the filtered scope.")
+        return
+
+    ranking_df = reg.build_scatterplot_feature_ranking(
+        album_analytics_df=filtered_album_analytics_df,
         target_col=dp.TARGET_COL,
         method="pearson",
     )
@@ -1042,13 +1102,9 @@ def main() -> None:
 
     metadata_cols = pick_available_metadata_cols(albums_df)
 
-    explorer_df = build_relationship_explorer_df(
-        explorer_source_df=explorer_source_df,
-    )
-
     guided_feature_options = ranking_df["feature"].tolist()
-    freeform_numeric_options = get_freeform_numeric_options(explorer_df)
-    color_options = get_color_options(explorer_df)
+    freeform_numeric_options = get_freeform_numeric_options(filtered_explorer_df)
+    color_options = get_color_options(filtered_explorer_df)
 
     freeform_default_y = (
         "lfm_album_playcount"
@@ -1056,11 +1112,23 @@ def main() -> None:
         else dp.TARGET_COL
     )
 
+    freeform_default_x = (
+        "lfm_album_listeners"
+        if "lfm_album_listeners" in freeform_numeric_options
+        else dp.TARGET_COL
+    )
+
     controls = get_scatter_controls(
         guided_feature_options=guided_feature_options,
         freeform_numeric_options=freeform_numeric_options,
         color_options=color_options,
+        default_x=freeform_default_x,
         default_y=freeform_default_y,
+    )
+
+    st.markdown("**Filter Context**")
+    st.caption(
+        f"{len(filtered_explorer_df):,} albums remain after shared year/genre filtering."
     )
 
     if controls["mode"] == "Guided":
@@ -1068,7 +1136,7 @@ def main() -> None:
         feature_rank = rank_lookup[selected_feature]
 
         plot_df, line_df, metrics = reg.build_exploratory_scatter_data(
-            album_analytics_df=album_analytics_df,
+            album_analytics_df=filtered_album_analytics_df,
             feature_col=selected_feature,
             metadata_df=albums_df,
             metadata_cols=metadata_cols,
@@ -1145,7 +1213,7 @@ def main() -> None:
             return
 
         plot_df, line_df, metrics = build_freeform_scatter_data(
-            explorer_df=explorer_df,
+            explorer_df=filtered_explorer_df,
             x_col=x_col,
             y_col=y_col,
             color_col=color_col,

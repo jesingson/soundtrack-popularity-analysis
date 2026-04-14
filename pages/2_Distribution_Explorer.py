@@ -5,8 +5,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from app.app_controls import get_distribution_controls
+from app.app_controls import (
+    get_distribution_controls,
+    get_global_filter_controls,
+)
 from app.app_data import load_explorer_data
+from app.data_filters import filter_dataset
+from app.explorer_shared import get_global_filter_inputs
 from app.ui import (
     apply_app_styles,
     get_display_label,
@@ -914,13 +919,31 @@ def main() -> None:
     explorer_df = load_explorer_data()
     distribution_df = build_distribution_explorer_df(explorer_df)
 
+    filter_inputs = get_global_filter_inputs(distribution_df)
+
+    global_controls = get_global_filter_controls(
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
+    )
+
+    filtered_distribution_df = filter_dataset(
+        distribution_df,
+        global_controls,
+    ).copy()
+
+    if filtered_distribution_df.empty:
+        st.warning("No albums remain under the current global filters.")
+        return
+
     numeric_options = [
         col for col in PREFERRED_NUMERIC_COLS
-        if col in distribution_df.columns
+        if col in filtered_distribution_df.columns
     ]
-    group_options = get_distribution_group_options(distribution_df)
+    group_options = get_distribution_group_options(filtered_distribution_df)
     group_value_options_map = build_group_value_options_map(
-        distribution_df,
+        filtered_distribution_df,
         group_options,
     )
 
@@ -938,7 +961,7 @@ def main() -> None:
     top_n = controls["top_n"]
 
     plot_df = prepare_distribution_data(
-        df=distribution_df,
+        df=filtered_distribution_df,
         metric=metric,
         use_log=use_log,
         group_var=group_var,
@@ -963,6 +986,10 @@ def main() -> None:
         )
     )
 
+    st.markdown("**Filter Context**")
+    st.caption(
+        f"{len(filtered_distribution_df):,} albums remain after shared year/genre filtering."
+    )
     st.markdown("**View Context**")
     st.caption(
         build_distribution_context_caption(
