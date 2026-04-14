@@ -506,7 +506,13 @@ def get_least_connected_predictor(
         return None
 
     predictor_matrix = corr_matrix.loc[predictor_cols, predictor_cols].abs().copy()
-    np.fill_diagonal(predictor_matrix.values, np.nan)
+
+    diag_mask = pd.DataFrame(
+        np.eye(len(predictor_matrix), dtype=bool),
+        index=predictor_matrix.index,
+        columns=predictor_matrix.columns,
+    )
+    predictor_matrix = predictor_matrix.mask(diag_mask)
 
     mean_abs = predictor_matrix.mean(axis=1, skipna=True).dropna()
     if mean_abs.empty:
@@ -514,7 +520,6 @@ def get_least_connected_predictor(
 
     weakest = mean_abs.sort_values(ascending=True).index[0]
     return weakest, float(mean_abs.loc[weakest])
-
 
 def build_archetype_opportunity_text(
     redundancy_df: pd.DataFrame,
