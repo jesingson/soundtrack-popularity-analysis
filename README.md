@@ -1,367 +1,279 @@
-# Soundtrack Popularity Analysis Pipeline
-Refactored a notebook-based soundtrack popularity study into a modular Python analysis pipeline that performs feature engineering, statistical analysis, and automated HTML reporting.
+# 🎼 Soundtrack Popularity Analysis
 
-## Overview
+An end-to-end data science project exploring what drives the success of film soundtracks — integrating multi-source data, feature engineering, exploratory analysis, and statistical modeling into an interactive Streamlit application.
 
-This repository contains a productionized Python implementation of a data analysis workflow originally developed in a Jupyter Notebook. The goal of the project is to analyze factors associated with soundtrack album popularity by combining film-level features with album-level metadata and listener statistics.
-
-The pipeline performs the following tasks:
-
-1. Loads soundtrack album and track-level data from CSV files
-2. Cleans and engineers analytical features
-3. Performs exploratory correlation analysis
-4. Runs a regression workflow to model soundtrack popularity
-5. Generates HTML reports containing charts and statistical outputs
-
-The original notebook included additional exploratory components such as hypothesis testing. For the purposes of this production script conversion, the implemented workflow focuses on the core **data preparation, correlation analysis, and regression modeling pipeline** needed for reproducible analysis.
+🔗 **Live App**: https://soundtrack-popularity-explorer.streamlit.app/
+📦 **Repo**: https://github.com/jesingson/soundtrack-popularity-analysis
 
 ---
 
-## Motivation
+## 🧭 Project Context
 
-Exploratory analysis is often conducted in notebooks, but notebook workflows can be difficult to reuse, maintain, or automate.  
+This project builds on a collaborative milestone:
 
-This project demonstrates how a notebook-based data analysis can be refactored into a structured Python pipeline that separates data preparation, analysis logic, and visualization into reusable modules.
+👉 https://github.com/soundtrack-analytics-team/Drivers-of-Film-Soundtrack-Popularity
 
----
-# Quick Start (30 seconds)
+The milestone focused on:
 
-1. Install dependencies
+* constructing a unified dataset across film, album, and track levels
+* performing structured exploratory analysis
+* developing initial statistical models
 
-```bash
-pip install -r requirements.txt
-```
-
-2. Run the analysis
-
-```bash
-python main.py \
-    data/albums.csv \
-    data/wide.csv \
-    --output-dir output \
-    --open-browser
-```
-
-3. View the generated reports
-
-```
-output/correlation_report.html
-output/regression_report.html
-```
+This repository extends that work into a **fully interactive analytical system**, with deeper feature engineering and multi-level modeling.
 
 ---
 
-# Repository Structure
+## 🚀 What This Project Adds
 
-```
-.
-├── main.py
-├── data_processing.py
-├── analysis.py
-├── regression_analysis.py
-├── regression_visualization.py
-├── requirements.txt
-├── README.md
-└── data/
-    ├── albums.csv
-    └── wide.csv
-```
-
-### main.py
-
-Command-line entry point for the pipeline.
-
-This script orchestrates the full workflow:
-
-- loading input datasets
-- building the analysis dataframe
-- running correlation analysis
-- running regression analysis
-- generating HTML reports
+* Introduces **track-level and album-structure analysis**
+* Builds **novel engineered features** (cohesion, track lift, structural metrics)
+* Implements **filter-aware, interactive modeling workflows**
+* Extends analysis from static notebooks → **production-style analytical app**
 
 ---
 
-### data_processing.py
+## 🧱 Data Sources
 
-Contains functions responsible for:
+The dataset integrates multiple external sources:
 
-- loading input CSV files
-- feature engineering
-- preparing the final album-level analysis dataset
-
-Features created include:
-
-- track counts per soundtrack
-- award nomination counts
-- composer album counts
-- normalized genre indicator flags
+* **TMDB** → film metadata (genres, budget, revenue, popularity)
+* **Last.fm** → album and track listeners/playcounts
+* **Spotify-style audio features (RapidAPI)** → energy, tempo, loudness, etc.
+* **MusicBrainz** → album-track relationships
+* **Custom scraping** → awards (Oscars, BAFTA, Critics)
 
 ---
 
-### analysis.py
+## 🛠 Feature Engineering
 
-Provides correlation-based analysis utilities including:
+Key transformations include:
 
-- correlation matrix computation
-- correlation heatmap visualization
-- feature correlation lollipop chart
-- robustness diagnostics comparing Pearson vs Spearman correlations
-- sensitivity tests that trim extreme target values
+* **log-transformed targets**
 
----
+  * `log_lfm_album_listeners`
+  * `log_lfm_track_playcount`
 
-### regression_analysis.py
+* **album cohesion metrics**
 
-Implements the regression workflow:
+  * consistency/variance across track-level audio features
 
-1. Defines candidate predictors
-2. Filters weak continuous predictors
-3. Applies transformations (log transforms and standardization)
-4. Removes predictors that may introduce multicollinearity
-5. Fits a final OLS regression model using Statsmodels
+* **track-level structure**
 
-This module also prepares datasets used for regression visualizations.
+  * relative track position
+  * track lift vs album baseline
 
----
+* **release timing**
 
-### regression_visualization.py
+  * film–album lag
+  * time since release
 
-Contains Altair chart construction functions used in the regression report:
+* **genre normalization**
 
-- film vote count vs soundtrack listener scatterplot
-- coefficient dot-and-whisker plot with confidence intervals
+  * binary genre flags across film and album
 
 ---
 
-# Data Inputs
+## 🧪 Modeling Approach
 
-The script expects two CSV files.
+Rather than relying on a single regression model, this project uses **comparative modeling** to understand system behavior:
 
-## albums.csv
+### Album-level
 
-Album-level dataset containing soundtrack metadata and listener statistics.
+* Full models (with exposure controls)
+* Models without exposure variables
+* Structure-only models (removing exposure + film genre)
 
-Example columns include:
+### Track-level
 
-- `release_group_mbid`
-- `tmdb_id`
-- `log_lfm_album_listeners`
-- genre indicators
-- award nominations
-- film metadata
+* Track-only models (audio + structure)
+* Track + context models (film + album controls)
 
----
+This enables identification of:
 
-## wide.csv
-
-Track-level dataset used to derive additional album features.
-
-Example columns include:
-
-- `release_group_mbid`
-- `tmdb_id`
-- `track_id`
-
-These datasets are merged and transformed to construct the final analysis dataframe used by the pipeline.
+* **confounding variables**
+* **suppressed effects**
+* **robust predictors across levels**
 
 ---
 
-# Environment Setup
+## 📊 Key Findings
 
-## 1. Clone the repository
+### 1. Exposure dominates — but obscures underlying structure
 
-```bash
-git clone <your-repository-url>
-cd <repository-name>
-```
+Film-level exposure (e.g., vote count, popularity) explains a large share of soundtrack performance. When included, it suppresses the apparent impact of many other variables.
 
 ---
 
-## 2. Create a virtual environment
+### 2. Many predictors are masked by exposure
 
-Example using Python venv:
+When exposure variables are removed, several effects emerge:
 
-```bash
-python -m venv testenv
-```
+* film rating (quality)
+* film genres (e.g., animation, fantasy)
+* release timing
 
-Activate it.
-
-### Mac / Linux
-
-```bash
-source testenv/bin/activate
-```
-
-### Windows
-
-```bash
-testenv\Scripts\activate
-```
+This indicates that these variables are **confounded by exposure rather than irrelevant**.
 
 ---
 
-## 3. Install dependencies
+### 3. Album cohesion is a robust, independent driver
 
-```bash
-pip install -r requirements.txt
-```
+Album cohesion remains strongly significant across all model specifications:
 
-Required packages include:
+* full models with exposure controls
+* models without exposure
+* structure-only models
 
-- pandas
-- numpy
-- altair
-- statsmodels
+This suggests that **internal album design meaningfully contributes to success**, independent of visibility.
 
 ---
 
-# Running the Analysis
+### 4. Structural and content effects persist without exposure
 
-The pipeline is executed through `main.py`.
+In models that exclude both exposure and film genre:
 
-Example command:
+* **classical/orchestral soundtracks** show strong positive effects
+* **film rating** becomes significant
+* **release timing** remains important
 
-```bash
-python main.py \
-    data/albums.csv \
-    data/wide.csv \
-    --output-dir output \
-    --open-browser
-```
+These reflect **intrinsic content and structure**, not marketing scale.
 
 ---
 
-# Command Line Arguments
+### 5. Track performance depends heavily on context
 
-| Argument | Description |
-|--------|--------|
-| `album_file_path` | Positional path to the album-level dataset (e.g., `data/albums.csv`) |
-| `wide_file_path` | Positional path to the track-level dataset (e.g., `data/wide.csv`) |
-| `--output-dir` | Directory where HTML reports will be written |
-| `--open-browser` | Optional flag that automatically opens generated reports in the default web browser |
+Two track-level models were compared:
 
-Example without opening the browser:
+| Model           | R²    | Insight                               |
+| --------------- | ----- | ------------------------------------- |
+| Track-only      | ~0.03 | Audio and structure appear predictive |
+| Track + context | ~0.32 | Film + album context dominates        |
 
-```bash
-python main.py \
-    data/albums.csv \
-    data/wide.csv \
-    --output-dir output
-```
+When film and album controls are added:
 
----
+* overall explanatory power increases dramatically
+* many audio feature effects shrink or disappear
+* **track position remains strongly significant**
 
-# Outputs
-
-The script generates two HTML reports.
-
-## Correlation Report
-
-```
-correlation_report.html
-```
-
-Includes:
-
-- correlation heatmap
-- lollipop chart showing feature correlations with album popularity
-- robustness diagnostics comparing Pearson and Spearman correlations
-- trimmed distribution sensitivity analysis
+👉 Track-level performance is largely driven by **context**, but structural effects persist.
 
 ---
 
-## Regression Report
+### 6. Audio features are not primary drivers
 
-```
-regression_report.html
-```
+Most audio features (tempo, mode, danceability) show weak or inconsistent effects once film and album context are introduced.
 
-Includes:
-
-- regression predictor filtering summary
-- full OLS regression results table
-- scatterplot showing film exposure vs soundtrack popularity
-- coefficient visualization with confidence intervals
+👉 This challenges common assumptions in music analytics.
 
 ---
 
-# Code Quality and Best Practices
+### 7. Popularity operates in layered systems
 
-This project was designed following Python best practices.
+Soundtrack success reflects two interacting mechanisms:
 
-### Modularity
+* **Top-down exposure effects**
+  (film visibility, audience reach)
 
-The codebase is organized into logical modules:
-
-- data preparation
-- exploratory analysis
-- regression modeling
-- visualization
-
-Each function has a **single responsibility** and clearly defined inputs and outputs.
+* **Bottom-up structural effects**
+  (cohesion, genre, sequencing, timing)
 
 ---
 
-### Documentation
+### 8. Apparent insignificance can be misleading
 
-All modules and functions include:
+Variables that appear unimportant in full models often become significant when dominant predictors are removed.
 
-- detailed docstrings
-- type hints
-- explanatory comments for non-obvious logic
+👉 Demonstrates the importance of testing for **confounding and suppression effects**
 
 ---
 
-### Linting
+## 📈 Model Comparison Summary
 
-The code passes pylint with a perfect score:
-
-```
-10.00 / 10
-```
-
-This confirms compliance with:
-
-- PEP8 style guidelines
-- proper naming conventions
-- maintainable code structure
+| Model                  | R²    | Insight                               |
+| ---------------------- | ----- | ------------------------------------- |
+| Album (full)           | ~0.16 | Exposure dominates                    |
+| Album (no exposure)    | ~0.13 | Hidden effects emerge                 |
+| Album (structure-only) | ~0.10 | Cohesion + genre + quality persist    |
+| Track (track-only)     | ~0.03 | Misleading standalone signals         |
+| Track (with context)   | ~0.32 | Context dominates, structure persists |
 
 ---
 
-# Testing
+## 🌟 Highlight Pages
 
-The script was tested in a fresh Python environment to ensure:
+### 🎼 Co-occurrence & Cross-Entity Explorer
 
-- all dependencies install correctly
-- the pipeline runs without errors
-- reports generate successfully
-
-The modular structure of the project makes it straightforward to extend with unit tests if desired.
+* How do film genres, album genres, and awards interact?
+* Features an interactive **Chord diagram** to visualize relationships across entities
+* Reveals structural overlaps and unexpected genre pairings
 
 ---
 
-# Project Background
-This project originated as part of a data science coursework exercise focused on converting notebook-based analysis into a maintainable Python pipeline.
+### 🎵 Track Sequence Explorer
 
-The repository demonstrates:
+* How does listener engagement evolve across an album?
+* Identifies **front-loading effects** and listener drop-off patterns
 
-- modular Python architecture
-- reusable functions with single responsibilities
-- type hints and documentation
-- linting compliance
-- configurable command-line execution
-- reproducible analytical outputs
+---
 
-The original exploratory notebook is included in the repository for reference.
+### 🎵 Track Cohesion Explorer
 
-# Extending the Analysis
+* Do more consistent albums perform better?
+* Validates cohesion as a **robust structural predictor**
 
-The modular architecture allows additional analytical components or visualizations to be added easily.
+---
 
-For example, future extensions may include:
+### 🎵 Track ↔ Album Relationship Explorer
 
-- additional exploratory visualizations
-- alternative regression specifications
-- feature importance analysis
-- interactive dashboards built with Streamlit
+* What defines a breakout track?
+* Shows how a small number of tracks often drive album success
+
+---
+
+### 📊 Ridge (Distribution) Explorer
+
+* How do feature distributions differ across performance levels?
+* Uses **smoothed density (ridge) plots** to reveal structural differences
+
+---
+
+### 📊 Concentration Explorer
+
+* Are outcomes driven by a few hits or broad engagement?
+* Uses **Gini coefficients, top-N share, and Lorenz curves**
+
+---
+
+## 🏗 Architecture
+
+* `data_processing.py` → dataset construction
+* `analysis.py` → statistical utilities
+* `ridge_analysis.py` → distribution modeling
+* `regression_analysis.py` → OLS pipelines
+* `track_regression_analysis.py` → track-level modeling
+* `app_controls.py` → shared UI controls
+* `pages/` → modular Streamlit explorers
+
+---
+
+## 💡 What This Project Demonstrates
+
+* multi-source data integration
+* advanced feature engineering
+* modeling across multiple granularities
+* understanding of confounding and causal structure
+* building production-style analytical tools
+
+---
+
+## 🤝 Credits
+
+Dataset and initial modeling:
+
+👉 https://github.com/soundtrack-analytics-team/Drivers-of-Film-Soundtrack-Popularity
+
+---
+
+## 🔥 Executive Summary
+
+> Once exposure is removed, soundtrack success is most strongly associated with album cohesion, orchestral composition, and film quality — while track-level performance is largely driven by context, with structural effects like sequencing remaining independently significant.
