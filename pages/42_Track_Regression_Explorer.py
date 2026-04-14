@@ -18,6 +18,7 @@ from track_regression_analysis import (
     TRACK_REGRESSION_TARGET_OPTIONS,
     build_track_coefficient_plot_df,
     run_track_regression_pipeline,
+    define_track_regression_features,
 )
 from track_regression_visualization import create_track_coefficient_whisker_chart
 
@@ -211,25 +212,27 @@ def main() -> None:
         st.warning("No tracks remain under the current global filters.")
         st.stop()
 
+    feature_config_preview = define_track_regression_features(
+        track_df=filtered_track_df,
+        target_col="log_lfm_track_playcount",
+        threshold=0.05,
+    )
+
+    hard_excluded_features = {
+        "album_cohesion_has_audio_data",
+        "track_audio_feature_count",
+        "track_has_any_audio_features",
+    }
+
     exclude_feature_options = sorted(
-        [
-            col for col in filtered_track_df.columns
-            if col not in {
-            "tmdb_id",
-            "release_group_mbid",
-            "film_year",
-            "film_genres",
-            "album_genres_display",
-            "lfm_track_listeners",
-            "lfm_track_playcount",
-            "spotify_popularity",
-            "log_lfm_track_listeners",
-            "log_lfm_track_playcount",
-            "album_cohesion_has_audio_data",
-            "track_audio_feature_count",
-            "track_has_any_audio_features",
+        {
+            *feature_config_preview["continuous_features"],
+            *feature_config_preview["binary_features"],
+            *feature_config_preview["film_controls"],
+            *feature_config_preview["album_controls"],
+            *feature_config_preview["context_binary_features"],
         }
-        ]
+        - hard_excluded_features
     )
 
     regression_controls = get_track_regression_controls(
