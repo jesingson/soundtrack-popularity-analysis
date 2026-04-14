@@ -203,6 +203,8 @@ Variables that appear unimportant in full models often become significant when d
 
 ### 🎼 Co-occurrence & Cross-Entity Explorer
 
+![Chord Chart](images/chord_chart.png)
+
 * How do film genres, album genres, and awards interact?
 * Features an interactive **Chord diagram** to visualize relationships across entities
 * Reveals structural overlaps and unexpected genre pairings
@@ -211,6 +213,7 @@ Variables that appear unimportant in full models often become significant when d
 
 ### 🎵 Track Sequence Explorer
 
+![Horizon Chart](images/horizon_chart.png)
 * How does listener engagement evolve across an album?
 * Identifies **front-loading effects** and listener drop-off patterns
 
