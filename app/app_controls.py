@@ -874,137 +874,189 @@ def get_cross_entity_controls(
     }
 
 # PAGE 8 Controls
-def get_correlation_controls() -> dict:
+def get_correlation_controls(
+    *,
+    min_year: int | None = None,
+    max_year: int | None = None,
+    film_genre_options: list[str] | None = None,
+    album_genre_options: list[str] | None = None,
+    composer_options: list[str] | None = None,
+    label_options: list[str] | None = None,
+    include_global_filters: bool = False,
+    include_composers: bool = False,
+    include_labels: bool = False,
+    include_search: bool = False,
+    include_min_tracks: bool = False,
+    include_listeners_only: bool = False,
+    default_listeners_only: bool = True,
+    min_tracks_min: int = 1,
+    min_tracks_max: int = 40,
+    default_min_tracks: int = 1,
+) -> dict:
     """
-    Render sidebar controls for the Correlation Explorer.
+    Render controls for correlation pages.
 
-    Returns:
-        dict: Control values for the page.
+    By default, this behaves like the existing correlation control panel.
+    Album pages can opt into a richer global-scope block by passing
+    include_global_filters=True and supplying the relevant option lists.
     """
-    st.sidebar.header("Correlation Explorer Controls")
+    controls: dict[str, object] = {}
 
-    method = st.sidebar.radio(
+    if include_global_filters:
+        st.sidebar.markdown("### Global Album Scope")
+
+        if min_year is None or max_year is None:
+            raise ValueError(
+                "min_year and max_year are required when include_global_filters=True."
+            )
+
+        year_range = st.sidebar.slider(
+            "Film year",
+            min_value=min_year,
+            max_value=max_year,
+            value=(min_year, max_year),
+        )
+        controls["year_range"] = year_range
+
+        selected_film_genres = st.sidebar.multiselect(
+            "Film genres",
+            options=film_genre_options or [],
+            default=[],
+        )
+        controls["selected_film_genres"] = selected_film_genres
+
+        selected_album_genres = st.sidebar.multiselect(
+            "Album genres",
+            options=album_genre_options or [],
+            default=[],
+        )
+        controls["selected_album_genres"] = selected_album_genres
+
+        if include_composers:
+            controls["selected_composers"] = st.sidebar.multiselect(
+                "Composers",
+                options=composer_options or [],
+                default=[],
+                help="Leave blank to include all composers.",
+            )
+
+        if include_labels:
+            controls["selected_labels"] = st.sidebar.multiselect(
+                "Labels",
+                options=label_options or [],
+                default=[],
+                help="Leave blank to include all labels.",
+            )
+
+        if include_search:
+            controls["search_text"] = st.sidebar.text_input(
+                "Search album, film, composer, or label",
+                value="",
+                help=(
+                    "Case-insensitive text search across album title, film title, "
+                    "composer, and label."
+                ),
+            )
+
+        if include_min_tracks:
+            controls["min_tracks"] = st.sidebar.slider(
+                "Minimum number of tracks",
+                min_value=min_tracks_min,
+                max_value=min_tracks_max,
+                value=default_min_tracks,
+                step=1,
+            )
+
+        if include_listeners_only:
+            controls["listeners_only"] = st.sidebar.checkbox(
+                "Only show albums with Last.fm listener data",
+                value=default_listeners_only,
+            )
+
+        st.sidebar.markdown("---")
+
+    st.sidebar.markdown("### Correlation View")
+
+    controls["target_col"] = st.sidebar.radio(
+        "Album popularity target",
+        options=["log_lfm_album_listeners", "log_lfm_album_playcount"],
+        index=0,
+        format_func=lambda x: (
+            "Log Album Listeners"
+            if x == "log_lfm_album_listeners"
+            else "Log Album Playcount"
+        ),
+    )
+
+    controls["method"] = st.sidebar.radio(
         "Correlation method",
-        options=["pearson", "spearman"],
+        options=["spearman", "pearson"],
         index=0,
-        help=(
-            "Pearson emphasizes linear relationships. "
-            "Spearman emphasizes monotonic rank-order relationships."
-        ),
+        horizontal=True,
     )
 
-    ranking_mode = st.sidebar.selectbox(
-        "Lollipop ranking mode",
-        options=["Absolute", "Positive only", "Negative only"],
+    controls["ranking_mode"] = st.sidebar.selectbox(
+        "Rank features by",
+        options=["Absolute correlation", "Positive first", "Negative first"],
         index=0,
-        help=(
-            "Absolute shows the strongest relationships by magnitude. "
-            "Positive only and Negative only restrict the ranking to one direction."
-        ),
     )
 
-    top_n = st.sidebar.slider(
-        "Top features in lollipop chart",
+    controls["top_n"] = st.sidebar.slider(
+        "Top features in ranking",
         min_value=5,
         max_value=30,
-        value=12,
+        value=15,
         step=1,
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Heatmap Controls")
+    st.sidebar.markdown("### Heatmap Controls")
 
-    heatmap_scope = st.sidebar.radio(
+    controls["heatmap_scope"] = st.sidebar.radio(
         "Heatmap feature scope",
-        options=["Full matrix", "Top lollipop features only"],
+        options=[
+            "Top ranked features only",
+            "Success anchors only",
+            "Album release / structure",
+            "Album genres",
+            "Film genres",
+            "Awards",
+            "Context continuous",
+            "Context binary",
+            "All visible features",
+        ],
         index=0,
-        help=(
-            "Use the full feature matrix, or limit the heatmap to the same top-ranked "
-            "features shown in the lollipop chart."
-        ),
     )
 
-    heatmap_top_n = st.sidebar.slider(
-        "Features in reduced heatmap",
+    controls["heatmap_top_n"] = st.sidebar.slider(
+        "Top ranked features used in heatmap",
         min_value=5,
         max_value=25,
         value=12,
         step=1,
-        disabled=(heatmap_scope != "Top lollipop features only"),
     )
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Tables")
+    st.sidebar.markdown("### Tables")
 
-    show_lollipop_table = st.sidebar.checkbox(
-        "Show lollipop source table",
+    controls["show_lollipop_table"] = st.sidebar.checkbox(
+        "Show ranked correlation table",
         value=False,
     )
 
-    show_heatmap_table = st.sidebar.checkbox(
-        "Show heatmap source tables",
+    controls["show_heatmap_table"] = st.sidebar.checkbox(
+        "Show heatmap matrix table",
         value=False,
     )
 
-    return {
-        "method": method,
-        "ranking_mode": ranking_mode,
-        "top_n": top_n,
-        "heatmap_scope": heatmap_scope,
-        "heatmap_top_n": heatmap_top_n,
-        "show_lollipop_table": show_lollipop_table,
-        "show_heatmap_table": show_heatmap_table,
-    }
+    return controls
 
 # PAGE 9 Controls
-def get_regression_controls() -> dict:
-    """
-    Render sidebar controls for the regression explorer.
-
-    Returns:
-        dict: Selected control values.
-    """
-    st.sidebar.header("Regression Controls")
-
-    show_filter_summary = st.sidebar.checkbox(
-        "Show feature filtering summary",
-        value=True,
-    )
-
-    show_transform_summary = st.sidebar.checkbox(
-        "Show transform summary",
-        value=True,
-    )
-
-    show_finalize_summary = st.sidebar.checkbox(
-        "Show final predictor cleanup",
-        value=True,
-    )
-
-    show_coefficient_table = st.sidebar.checkbox(
-        "Show coefficient dataframe",
-        value=False,
-    )
-
-    show_model_summary = st.sidebar.checkbox(
-        "Show full OLS summary",
-        value=True,
-    )
-
-    return {
-        "show_filter_summary": show_filter_summary,
-        "show_transform_summary": show_transform_summary,
-        "show_finalize_summary": show_finalize_summary,
-        "show_coefficient_table": show_coefficient_table,
-        "show_model_summary": show_model_summary,
-    }
-
-# PAGE 10 Controls
 def get_ridge_controls(
     preset_labels: dict[str, str],
     preset_keys: list[str],
     all_available_features: list[str],
     default_custom_features: list[str],
+    target_options: list[str] | None = None,
 ) -> dict:
     """
     Render sidebar controls for the ridge explorer.
@@ -1015,11 +1067,22 @@ def get_ridge_controls(
         all_available_features: Full set of available ridge features.
         default_custom_features: Default feature list to preselect when
             the user chooses the custom preset.
+        target_options: Optional list of outcome columns to expose as a
+            target selector. If omitted, no target selector is shown.
 
     Returns:
         dict: Selected control values.
     """
     st.sidebar.header("Ridge Explorer Controls")
+
+    controls = {}
+
+    if target_options:
+        controls["target_col"] = st.sidebar.selectbox(
+            "Album success target",
+            options=target_options,
+            format_func=get_display_label,
+        )
 
     preset_key = st.sidebar.selectbox(
         "Preset",
@@ -1090,6 +1153,7 @@ def get_ridge_controls(
     )
 
     return {
+        "target_col": controls.get("target_col"),
         "preset_key": preset_key,
         "top_n": top_n,
         "selected_features": selected_features,
@@ -1101,6 +1165,79 @@ def get_ridge_controls(
         "show_ridge_long_sample": show_ridge_long_sample,
     }
 
+# PAGE 10 Controls
+def get_regression_controls(
+    target_options: list[str] | None = None,
+) -> dict:
+    """
+    Render sidebar controls for the regression explorer.
+
+    Args:
+        target_options: Optional list of outcome columns to expose as a
+            target selector. If omitted, no target selector is shown.
+
+    Returns:
+        dict: Selected control values.
+    """
+    st.sidebar.header("Regression Explorer Controls")
+
+    controls = {}
+
+    if target_options:
+        controls["target_col"] = st.sidebar.selectbox(
+            "Album success target",
+            options=target_options,
+            format_func=get_display_label,
+        )
+
+    threshold = st.sidebar.slider(
+        "Continuous-feature screening threshold",
+        min_value=0.00,
+        max_value=0.20,
+        value=0.05,
+        step=0.01,
+        help=(
+            "Minimum absolute Pearson correlation required to keep a continuous "
+            "predictor during the initial filtering step."
+        ),
+    )
+
+    st.sidebar.markdown("---")
+
+    show_coefficient_table = st.sidebar.checkbox(
+        "Show coefficient dataframe",
+        value=False,
+    )
+
+    show_filter_summary = st.sidebar.checkbox(
+        "Show feature filtering summary",
+        value=False,
+    )
+
+    show_transform_summary = st.sidebar.checkbox(
+        "Show transform summary",
+        value=False,
+    )
+
+    show_finalize_summary = st.sidebar.checkbox(
+        "Show final predictor cleanup",
+        value=False,
+    )
+
+    show_model_summary = st.sidebar.checkbox(
+        "Show full OLS summary",
+        value=False,
+    )
+
+    return {
+        "target_col": controls.get("target_col"),
+        "threshold": threshold,
+        "show_coefficient_table": show_coefficient_table,
+        "show_filter_summary": show_filter_summary,
+        "show_transform_summary": show_transform_summary,
+        "show_finalize_summary": show_finalize_summary,
+        "show_model_summary": show_model_summary,
+    }
 
 # PAGE 20 Controls
 def get_track_structure_controls(

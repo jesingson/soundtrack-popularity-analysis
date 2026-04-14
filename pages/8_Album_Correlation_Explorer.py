@@ -1,10 +1,17 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import altair as alt
 
 import analysis as an
 from app.app_controls import get_correlation_controls
-from app.app_data import load_analysis_data
+from app.data_filters import filter_dataset
+from app.explorer_shared import (
+    get_clean_composer_options,
+    get_global_filter_inputs,
+    rename_and_dedupe_for_display,
+)
+from app.app_data import load_explorer_data
 from app.ui import (
     apply_app_styles,
     get_display_label,
@@ -114,17 +121,17 @@ def build_correlation_context_caption(
     else:
         ranking_text = "top absolute target relationships"
 
-    if heatmap_scope == "Top lollipop features only":
+    if heatmap_scope == "Top ranked features only":
         heatmap_text = (
-            f"Heatmap is limited to the top {heatmap_top_n:,} visible lollipop features."
+            f"Heatmap is limited to the top {heatmap_top_n:,} visible ranked features."
         )
     else:
-        heatmap_text = "Heatmap uses the full feature matrix."
+        heatmap_text = f"Heatmap scope is set to {heatmap_scope.lower()}."
 
     return (
         f"Using {method.title()} correlation across {rows_loaded:,} album rows, "
-        f"with the lollipop chart showing the top {top_n:,} {ranking_text} "
-        f"against {get_display_label('log_lfm_album_listeners')}. {heatmap_text}"
+        f"with the lollipop chart showing the top {top_n:,} {ranking_text}. "
+        f"{heatmap_text}"
     )
 
 
@@ -391,32 +398,171 @@ def build_heatmap_feature_subset(
     heatmap_scope: str,
     heatmap_top_n: int,
 ) -> pd.DataFrame:
-    """
-    Optionally restrict the heatmap to the top lollipop features.
-    """
-    if heatmap_scope != "Top lollipop features only":
+    """Select the feature subset shown in the album heatmap."""
+    if corr_matrix is None or corr_matrix.empty:
         return corr_matrix
 
-    if corr_df_plot.empty or corr_matrix.empty:
-        return corr_matrix
+    excluded_heatmap_features = {
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+        "log_lfm_album_listeners",
+        "log_lfm_album_playcount",
+    }
 
-    feature_col = _get_lollipop_feature_col(corr_df_plot)
-    top_features = (
-        corr_df_plot[feature_col]
-        .astype(str)
-        .head(heatmap_top_n)
-        .tolist()
-    )
-
-    available_features = [
-        feature for feature in top_features
-        if feature in corr_matrix.index and feature in corr_matrix.columns
+    working_corr_matrix = corr_matrix.copy()
+    keep_cols = [
+        col for col in working_corr_matrix.columns
+        if col not in excluded_heatmap_features
     ]
 
-    if len(available_features) < 2:
+    if len(keep_cols) >= 2:
+        working_corr_matrix = working_corr_matrix.loc[keep_cols, keep_cols].copy()
+    else:
         return corr_matrix
 
-    return corr_matrix.loc[available_features, available_features].copy()
+    ranked_features = (
+        corr_df_plot["feature"].head(heatmap_top_n).tolist()
+        if "feature" in corr_df_plot.columns
+        else []
+    )
+
+    success_anchor_features = [
+        col for col in [
+            "lfm_album_listeners",
+            "lfm_album_playcount",
+            "log_lfm_album_listeners",
+            "log_lfm_album_playcount",
+            "album_cohesion_score",
+            "n_tracks",
+            "composer_album_count",
+        ]
+        if col in working_corr_matrix.columns
+    ]
+
+    album_release_structure_features = [
+        col for col in [
+            "days_since_album_release",
+            "days_since_film_release",
+            "album_release_lag_days",
+            "n_tracks",
+            "composer_album_count",
+            "album_cohesion_score",
+            "album_cohesion_has_audio_data",
+        ]
+        if col in corr_matrix.columns
+    ]
+
+    album_genre_features = [
+        col for col in [
+            "ambient_experimental",
+            "classical_orchestral",
+            "electronic",
+            "hip_hop_rnb",
+            "pop",
+            "rock",
+            "world_folk",
+        ]
+        if col in corr_matrix.columns
+    ]
+
+    film_genre_features = [
+        col for col in working_corr_matrix.columns
+        if col.startswith("film_is_")
+    ]
+
+    awards_features = [
+        col for col in [
+            "oscar_score_nominee",
+            "oscar_score_winner",
+            "oscar_song_nominee",
+            "oscar_song_winner",
+            "globes_score_nominee",
+            "globes_score_winner",
+            "globes_song_nominee",
+            "globes_song_winner",
+            "critics_score_nominee",
+            "critics_score_winner",
+            "critics_song_nominee",
+            "critics_song_winner",
+            "bafta_score_nominee",
+            "bafta_score_winner",
+            "us_score_nominee_count",
+            "us_song_nominee_count",
+            "bafta_nominee",
+        ]
+        if col in corr_matrix.columns
+    ]
+
+    context_continuous_features = [
+        col for col in [
+            "film_vote_count",
+            "film_popularity",
+            "film_budget",
+            "film_revenue",
+            "film_rating",
+            "days_since_film_release",
+            "film_runtime_min",
+            "days_since_album_release",
+            "n_tracks",
+            "composer_album_count",
+            "album_cohesion_score",
+        ]
+        if col in corr_matrix.columns
+    ]
+
+    context_binary_features = [
+        col for col in corr_matrix.columns
+        if (
+            col.startswith("film_is_")
+            or col in {
+                "album_cohesion_has_audio_data",
+                "oscar_score_nominee",
+                "oscar_score_winner",
+                "oscar_song_nominee",
+                "oscar_song_winner",
+                "globes_score_nominee",
+                "globes_score_winner",
+                "globes_song_nominee",
+                "globes_song_winner",
+                "critics_score_nominee",
+                "critics_score_winner",
+                "critics_song_nominee",
+                "critics_song_winner",
+                "bafta_score_nominee",
+                "bafta_score_winner",
+            }
+        )
+    ]
+
+    scope_map = {
+        "Top ranked features only": ranked_features,
+        "Success anchors only": success_anchor_features,
+        "Album release / structure": album_release_structure_features,
+        "Album genres": album_genre_features,
+        "Film genres": film_genre_features,
+        "Awards": awards_features,
+        "Context continuous": context_continuous_features,
+        "Context binary": context_binary_features,
+        "All visible features": list(working_corr_matrix.columns),
+    }
+
+    selected_features = scope_map.get(heatmap_scope, ranked_features)
+    selected_features = [
+        feature for feature in selected_features
+        if feature in working_corr_matrix.index and feature in working_corr_matrix.columns
+    ]
+
+    if len(selected_features) < 2:
+        fallback_features = [
+            feature for feature in ranked_features
+            if feature in working_corr_matrix.index and feature in working_corr_matrix.columns
+        ]
+        selected_features = fallback_features[: max(2, min(len(fallback_features), heatmap_top_n))]
+
+    if len(selected_features) < 2:
+        return working_corr_matrix
+
+    return working_corr_matrix.loc[selected_features, selected_features]
 
 def render_lollipop_section(
     corr_df_plot: pd.DataFrame,
@@ -473,76 +619,264 @@ def render_heatmap_section(
         method: Correlation method.
         show_table: Whether to show the underlying matrix and long table.
     """
-    st.subheader("Correlation Heatmap")
+    st.subheader(f"Correlation Heatmap ({method.title()})")
+    st.caption(
+        "Use the heatmap scope control to focus on compact album-level feature sets "
+        "instead of viewing the full matrix all at once."
+    )
 
-    if corr_matrix.empty or corr_matrix.shape[0] < 2:
-        st.info("Not enough features remain to render the heatmap.")
+    if corr_matrix is None or corr_matrix.empty:
+        st.info("No correlation matrix available for the current selection.")
         return
 
     display_corr_matrix = apply_display_labels_to_corr_matrix(corr_matrix)
 
-    heatmap = (
-        an.plot_correlation_heatmap(
-            corr_matrix=display_corr_matrix,
-            title=f"Correlation Heatmap ({method.title()})",
-        )
-        .properties(
-            width=950,
-            height=950,
-        )
-        .configure_axisX(
-            labelAngle=-45,
-            labelFontSize=9,
-            labelLimit=300,
-            labelOverlap=False,
-        )
-        .configure_axisY(
-            labelFontSize=9,
-            labelLimit=220,
-            labelOverlap=False,
-        )
+    feature_count = display_corr_matrix.shape[0]
+
+    if feature_count <= 12:
+        chart_height = 500
+        label_font_size = 12
+    elif feature_count <= 20:
+        chart_height = 700
+        label_font_size = 11
+    elif feature_count <= 30:
+        chart_height = 900
+        label_font_size = 10
+    else:
+        chart_height = min(1400, 28 * feature_count)
+        label_font_size = 9
+
+    heatmap_chart = an.plot_correlation_heatmap(
+        corr_matrix=display_corr_matrix,
+        title=f"Correlation Heatmap ({method.title()})",
+    ).properties(
+        height=chart_height,
     )
 
-    st.altair_chart(heatmap, width="stretch")
-    st.caption(build_heatmap_supporting_insight(display_corr_matrix, method))
+    heatmap_chart = heatmap_chart.configure_axis(
+        labelFontSize=label_font_size,
+        titleFontSize=12,
+    )
+
+    heatmap_chart = heatmap_chart.configure_view(
+        stroke=None
+    )
+
+    st.altair_chart(heatmap_chart, width="stretch")
+
+    heatmap_insight = build_heatmap_supporting_insight(display_corr_matrix, method)
+    if heatmap_insight:
+        st.caption(heatmap_insight)
 
     if show_table:
-        st.write("Correlation matrix")
         st.dataframe(
-            rename_columns_for_display(display_corr_matrix),
+            rename_and_dedupe_for_display(display_corr_matrix.reset_index()),
             width="stretch",
         )
 
-        st.write("Long-form heatmap source")
-        st.dataframe(
-            rename_columns_for_display(an.corr_to_long(display_corr_matrix)),
-            width="stretch",
+def build_album_correlation_scope_caption(
+    filtered_df: pd.DataFrame,
+    controls: dict,
+) -> str:
+    """Describe the current filtered album scope in plain English."""
+    parts: list[str] = [f"{len(filtered_df):,} visible albums"]
+
+    year_min, year_max = controls["year_range"]
+    parts.append(f"film years {year_min}–{year_max}")
+
+    if controls.get("selected_film_genres"):
+        parts.append(
+            f"{len(controls['selected_film_genres'])} film genre filter(s)"
         )
+
+    if controls.get("selected_album_genres"):
+        parts.append(
+            f"{len(controls['selected_album_genres'])} album genre filter(s)"
+        )
+
+    if controls.get("selected_composers"):
+        parts.append(
+            f"{len(controls['selected_composers'])} composer filter(s)"
+        )
+
+    if controls.get("selected_labels"):
+        parts.append(
+            f"{len(controls['selected_labels'])} label filter(s)"
+        )
+
+    if controls.get("search_text", "").strip():
+        parts.append("text search active")
+
+    if controls.get("min_tracks", 1) > 1:
+        parts.append(f"minimum {controls['min_tracks']} tracks")
+
+    if controls.get("listeners_only", False):
+        parts.append("listener availability required")
+
+    return "Current album scope: " + " · ".join(parts) + "."
+
+
+def render_album_correlation_scope_metrics(
+    filtered_df: pd.DataFrame,
+    corr_df_plot: pd.DataFrame,
+    corr_matrix: pd.DataFrame,
+) -> None:
+    """Render top-level metrics for the current album slice."""
+    visible_predictors = len(corr_df_plot)
+    heatmap_features = corr_matrix.shape[0] if corr_matrix is not None else 0
+
+    top_abs_corr = None
+    if corr_df_plot is not None and not corr_df_plot.empty:
+        corr_col = _get_lollipop_corr_col(corr_df_plot)
+        top_abs_corr = float(corr_df_plot[corr_col].abs().max())
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Visible Albums", f"{len(filtered_df):,}")
+
+    with col2:
+        st.metric("Visible Ranked Predictors", f"{visible_predictors:,}")
+
+    with col3:
+        st.metric(
+            "Strongest Visible |r|",
+            "n/a" if top_abs_corr is None else f"{top_abs_corr:.3f}",
+        )
+
+    st.caption(
+        f"Heatmap currently includes {heatmap_features:,} feature(s) "
+        "after applying the selected scope and ranking settings."
+    )
+
+
+def build_top_redundancy_pairs_table(
+    corr_matrix: pd.DataFrame,
+    top_n: int = 5,
+) -> pd.DataFrame:
+    """Return strongest off-diagonal absolute correlation pairs."""
+    if corr_matrix is None or corr_matrix.empty or corr_matrix.shape[0] < 2:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    cols = list(corr_matrix.columns)
+
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            feature_a = cols[i]
+            feature_b = cols[j]
+            corr_value = float(corr_matrix.iloc[i, j])
+            rows.append(
+                {
+                    "feature_a": feature_a,
+                    "feature_b": feature_b,
+                    "correlation": corr_value,
+                    "abs_correlation": abs(corr_value),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["abs_correlation", "correlation"], ascending=[False, False])
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+
+def render_redundancy_section(corr_matrix: pd.DataFrame) -> None:
+    """Render a small redundancy handoff section for album modeling."""
+    st.subheader("Redundancy Check for Album Modeling")
+
+    redundancy_df = build_top_redundancy_pairs_table(corr_matrix, top_n=5)
+
+    if redundancy_df.empty:
+        st.info("Not enough features remain to summarize redundant predictors.")
+        return
+
+    top_pair = redundancy_df.iloc[0]
+
+    st.caption(
+        "Use this section to spot overlapping album-level predictors before "
+        "interpreting Album Ridge or Album Regression results."
+    )
+    st.caption(
+        f"The strongest visible overlap is **{get_display_label(str(top_pair['feature_a']))}** "
+        f"vs **{get_display_label(str(top_pair['feature_b']))}** "
+        f"(absolute correlation = {top_pair['abs_correlation']:.3f})."
+    )
+
+    display_df = redundancy_df.copy()
+    display_df["feature_a"] = display_df["feature_a"].astype(str).map(get_display_label)
+    display_df["feature_b"] = display_df["feature_b"].astype(str).map(get_display_label)
+
+    st.dataframe(
+        rename_and_dedupe_for_display(display_df),
+        width="stretch",
+    )
 
 def main() -> None:
     """
-    Run the correlation explorer page.
+    Run the album correlation explorer page.
     """
     st.set_page_config(
-        page_title="Correlation Explorer",
+        page_title="Album Correlation Explorer",
         layout="wide",
     )
     apply_app_styles()
 
-    st.title("Correlation Explorer")
-    st.write(
-        """
-        Explore pairwise feature relationships and feature-level correlations
-        with soundtrack album popularity.
-        """
+    st.title("Album Correlation Explorer")
+    st.caption(
+        "Identify album-level signals tied to soundtrack popularity and inspect "
+        "redundant predictors before moving into album ridge and regression."
     )
 
-    controls = get_correlation_controls()
-    album_analytics_df = load_analysis_data()
+    album_analytics_df = load_explorer_data().copy()
+
+    global_filter_inputs = get_global_filter_inputs(album_analytics_df)
+    composer_options = get_clean_composer_options(album_analytics_df)
+
+    label_options = sorted(
+        album_analytics_df["label_names"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    controls = get_correlation_controls(
+        min_year=global_filter_inputs["min_year"],
+        max_year=global_filter_inputs["max_year"],
+        film_genre_options=global_filter_inputs["film_genre_options"],
+        album_genre_options=global_filter_inputs["album_genre_options"],
+        composer_options=composer_options,
+        label_options=label_options,
+        include_global_filters=True,
+        include_composers=True,
+        include_labels=True,
+        include_search=True,
+        include_min_tracks=True,
+        include_listeners_only=True,
+        default_listeners_only=True,
+        min_tracks_min=1,
+        min_tracks_max=40,
+        default_min_tracks=1,
+    )
+
+    filtered_album_df = filter_dataset(album_analytics_df, controls)
+
+    if filtered_album_df.empty:
+        st.warning("No albums remain after the selected global filters.")
+        return
 
     raw_lollipop_df = an.prepare_lollipop_data(
-        album_analytics_df=album_analytics_df,
-        target_col="log_lfm_album_listeners",
+        album_analytics_df=filtered_album_df,
+        target_col=controls["target_col"],
         method=controls["method"],
     ).copy()
 
@@ -554,7 +888,7 @@ def main() -> None:
     corr_df_plot = ranked_lollipop_df.head(controls["top_n"]).copy()
 
     full_corr_matrix = an.compute_correlation_matrix(
-        album_analytics_df=album_analytics_df,
+        album_analytics_df=filtered_album_df,
         method=controls["method"],
     )
     full_corr_matrix = filter_correlation_matrix(full_corr_matrix)
@@ -566,18 +900,33 @@ def main() -> None:
         heatmap_top_n=controls["heatmap_top_n"],
     )
 
-    st.caption(get_correlation_view_explainer(controls["method"]))
+    target_label = (
+        "log album listeners"
+        if controls["target_col"] == "log_lfm_album_listeners"
+        else "log album playcount"
+    )
 
-    st.markdown("**View Context**")
+    st.caption(
+        f"{get_correlation_view_explainer(controls['method'])} "
+        f"Current target: {target_label}. "
+        f"{build_album_correlation_scope_caption(filtered_album_df, controls)}"
+    )
+
     st.caption(
         build_correlation_context_caption(
             method=controls["method"],
             ranking_mode=controls["ranking_mode"],
             top_n=controls["top_n"],
-            rows_loaded=len(album_analytics_df),
+            rows_loaded=len(filtered_album_df),
             heatmap_scope=controls["heatmap_scope"],
             heatmap_top_n=controls["heatmap_top_n"],
         )
+    )
+
+    render_album_correlation_scope_metrics(
+        filtered_df=filtered_album_df,
+        corr_df_plot=corr_df_plot,
+        corr_matrix=corr_matrix,
     )
 
     render_correlation_insight_cards(
@@ -599,8 +948,13 @@ def main() -> None:
         show_table=controls["show_heatmap_table"],
     )
 
+    st.divider()
+
+    render_redundancy_section(corr_matrix)
+
     st.caption(
-        "These are pairwise associations and should be interpreted as descriptive, not causal."
+        "These are pairwise associations within the currently selected album "
+        "slice and should be interpreted as descriptive, not causal."
     )
 
 

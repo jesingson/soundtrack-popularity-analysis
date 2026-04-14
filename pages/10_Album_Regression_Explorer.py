@@ -1,11 +1,108 @@
 import streamlit as st
 
+import numpy as np
+import pandas as pd
+import streamlit as st
+
 import regression_analysis as reg
 import regression_visualization as reg_viz
-from app.app_controls import get_regression_controls
-from app.app_data import load_regression_results
-from app.ui import apply_app_styles, rename_columns_for_display
+from app.app_controls import (
+    get_global_filter_controls,
+    get_regression_controls,
+)
+from app.app_data import load_analysis_data, load_explorer_data
+from app.data_filters import filter_dataset
+from app.explorer_shared import get_global_filter_inputs
+from app.ui import (
+    apply_app_styles,
+    get_display_label,
+    rename_columns_for_display,
+)
 
+ALBUM_REGRESSION_TARGET_CANDIDATES = [
+    "log_lfm_album_listeners",
+    "log_lfm_album_playcount",
+]
+
+def attach_regression_filter_metadata(
+    album_analytics_df,
+    album_explorer_df,
+):
+    """
+    Merge explorer-style global-filter metadata and missing outcome fields
+    onto the analysis dataframe.
+
+    This keeps the regression pipeline based on the analysis dataframe
+    while enriching it with:
+    - shared global-filter metadata
+    - album playcount target fields if they are missing
+    """
+    analysis_df = album_analytics_df.copy()
+    explorer_df = album_explorer_df.copy()
+
+    merge_keys = [
+        col for col in ["release_group_mbid", "tmdb_id"]
+        if col in analysis_df.columns and col in explorer_df.columns
+    ]
+
+    if not merge_keys:
+        return analysis_df
+
+    candidate_metadata_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "film_year",
+        "film_genres",
+        "album_genres_display",
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+        "log_lfm_album_listeners",
+        "log_lfm_album_playcount",
+    ]
+
+    metadata_cols = [
+        col for col in candidate_metadata_cols
+        if col in explorer_df.columns
+    ]
+
+    cols_to_add = [
+        col for col in metadata_cols
+        if col in merge_keys or col not in analysis_df.columns
+    ]
+
+    if len(cols_to_add) <= len(merge_keys):
+        merged_df = analysis_df.copy()
+    else:
+        metadata_df = (
+            explorer_df[cols_to_add]
+            .drop_duplicates(subset=merge_keys)
+            .copy()
+        )
+
+        merged_df = analysis_df.merge(
+            metadata_df,
+            on=merge_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    if (
+        "log_lfm_album_playcount" not in merged_df.columns
+        and "lfm_album_playcount" in merged_df.columns
+    ):
+        merged_df["log_lfm_album_playcount"] = np.log1p(
+            pd.to_numeric(merged_df["lfm_album_playcount"], errors="coerce")
+        )
+
+    if (
+        "log_lfm_album_listeners" not in merged_df.columns
+        and "lfm_album_listeners" in merged_df.columns
+    ):
+        merged_df["log_lfm_album_listeners"] = np.log1p(
+            pd.to_numeric(merged_df["lfm_album_listeners"], errors="coerce")
+        )
+
+    return merged_df
 
 def render_regression_metrics(regression_results: dict) -> None:
     """
@@ -158,7 +255,11 @@ def render_model_summary(results) -> None:
     """
     st.subheader("Full OLS Summary")
     st.text(results.summary().as_text())
-def build_regression_scope_caption(regression_results: dict) -> str:
+
+def build_regression_scope_caption(
+    regression_results: dict,
+    target_col: str,
+) -> str:
     """
     Build a short caption describing the current regression scope.
 
@@ -176,7 +277,8 @@ def build_regression_scope_caption(regression_results: dict) -> str:
     continuous_total = len(feature_config["continuous_features"])
 
     return (
-        f"Current scope: {ols_results['n_rows']:,} modeled rows, "
+        f"Current scope: target = {get_display_label(target_col)}, "
+        f"{ols_results['n_rows']:,} modeled rows, "
         f"{ols_results['n_predictors']:,} final predictors, and "
         f"{continuous_kept} of {continuous_total} continuous candidates "
         "retained after the initial screening step."
@@ -294,7 +396,7 @@ def render_coefficient_insight_cards(coef_df) -> None:
         st.caption(insights["card3_caption"])
 
 
-def build_coefficient_supporting_insight(coef_df) -> str:
+def build_coefficient_supporting_insight(coef_df, target_col: str) -> str:
     """
     Build a short supporting sentence for the coefficient plot.
 
@@ -320,35 +422,98 @@ def build_coefficient_supporting_insight(coef_df) -> str:
     total_coefficients = int(len(coef_df))
 
     return (
-        f"💡 The coefficient plot is led by '{top_feature}' "
-        f"(absolute coefficient {top_abs:.3f}). The median absolute effect "
-        f"across all predictors is {median_abs:.3f}, and "
+        f"💡 The coefficient plot for {get_display_label(target_col).lower()} is led by "
+        f"'{top_feature}' (absolute coefficient {top_abs:.3f}). "
+        f"The median absolute effect across all predictors is {median_abs:.3f}, and "
         f"{not_crossing_zero} of {total_coefficients} coefficients have "
         "intervals that do not cross 0."
     )
 
+def build_album_modeling_takeaway(
+    coef_df,
+    target_col: str,
+) -> str:
+    """
+    Build a short modeling takeaway from the visible coefficient table.
+    """
+    if coef_df.empty:
+        return (
+            f"No fitted model takeaway is available for "
+            f"{get_display_label(target_col).lower()}."
+        )
+
+    strong_effects = int((coef_df["abs_coef"] >= coef_df["abs_coef"].median()).sum())
+    clear_effects = int((~coef_df["crosses_zero"]).sum())
+
+    return (
+        f"The fitted album model suggests that {get_display_label(target_col).lower()} "
+        f"is shaped by several overlapping predictors rather than one dominant driver. "
+        f"{clear_effects} coefficients have confidence intervals that do not cross 0, "
+        f"and {strong_effects} predictors sit at or above the model’s median absolute effect size."
+    )
+
 def main() -> None:
     """
-    Run the regression explorer page.
+    Run the album regression explorer page.
     """
     st.set_page_config(
-        page_title="Regression Explorer",
+        page_title="Album Regression Explorer",
         layout="wide",
     )
     apply_app_styles()
 
-    st.title("Regression Explorer")
-    st.write(
-        """
-        This page walks through the staged regression workflow used to model
-        soundtrack popularity. The coefficient plot is the main interpretation
-        view: it shows each predictor's estimated direction and size in the
-        multivariate model, along with uncertainty from the 95% confidence interval.
-        """
+    st.title("Album Regression Explorer")
+    st.caption(
+        "Model album-level popularity while preserving the staged regression workflow "
+        "used in the analysis pipeline."
     )
 
-    controls = get_regression_controls()
-    regression_results = load_regression_results()
+    album_analytics_df = load_analysis_data()
+    album_explorer_df = load_explorer_data()
+
+    regression_filter_df = attach_regression_filter_metadata(
+        album_analytics_df=album_analytics_df,
+        album_explorer_df=album_explorer_df,
+    )
+
+    filter_inputs = get_global_filter_inputs(regression_filter_df)
+
+    global_controls = get_global_filter_controls(
+        min_year=filter_inputs["min_year"],
+        max_year=filter_inputs["max_year"],
+        film_genre_options=filter_inputs["film_genre_options"],
+        album_genre_options=filter_inputs["album_genre_options"],
+    )
+
+    filtered_album_df = filter_dataset(regression_filter_df, global_controls).copy()
+
+    if filtered_album_df.empty:
+        st.warning("No albums remain under the current global filters.")
+        st.stop()
+
+    available_target_options = [
+        col for col in ALBUM_REGRESSION_TARGET_CANDIDATES
+        if col in filtered_album_df.columns
+    ]
+
+    controls = get_regression_controls(
+        target_options=available_target_options,
+    )
+
+    target_col = controls.get("target_col", "log_lfm_album_listeners")
+    threshold = controls["threshold"]
+
+    if target_col not in filtered_album_df.columns:
+        st.error(
+            f"The selected regression target '{target_col}' is not available in the current album dataframe."
+        )
+        st.stop()
+
+    regression_results = reg.run_regression_pipeline(
+        album_analytics_df=filtered_album_df,
+        target_col=target_col,
+        threshold=threshold,
+    )
 
     filter_results = regression_results["filter_results"]
     transform_results = regression_results["transform_results"]
@@ -356,24 +521,84 @@ def main() -> None:
     ols_results = regression_results["ols_results"]
     results = ols_results["results"]
 
+    n_rows = ols_results["n_rows"]
+    n_predictors = ols_results["n_predictors"]
+
+    if n_rows < 30:
+        st.error(
+            f"""
+            ⚠️ Not enough data to run a stable regression.
+
+            Current selection produces only **{n_rows} albums**, which is too small
+            for meaningful statistical modeling.
+
+            👉 Try broadening your filters.
+            """
+        )
+        st.stop()
+
+    if n_rows < (5 * n_predictors):
+        st.warning(
+            f"""
+            ⚠️ Regression may be unstable under the current filters.
+
+            - Rows: {n_rows}
+            - Predictors: {n_predictors}
+
+            As a rule of thumb, you want at least **5–10 observations per predictor**.
+            """
+        )
+
+    quality_flag = "Good"
+    if n_rows < 30:
+        quality_flag = "Insufficient"
+    elif n_rows < (5 * n_predictors):
+        quality_flag = "Weak"
+
     st.caption(
-        build_regression_scope_caption(regression_results)
+        build_regression_scope_caption(
+            regression_results=regression_results,
+            target_col=target_col,
+        )
     )
 
-    render_regression_metrics(regression_results)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Modeling rows", f"{ols_results['n_rows']:,}")
+    with col2:
+        st.metric("Predictor count", f"{ols_results['n_predictors']:,}")
+    with col3:
+        st.metric(
+            "Continuous predictors kept",
+            f"{len(filter_results['kept_continuous'])} / {len(regression_results['feature_config']['continuous_features'])}",
+        )
+    with col4:
+        st.metric("Model quality", quality_flag)
 
     st.subheader("Coefficient Plot")
     st.caption(
         "Dots show coefficient estimates, whiskers show 95% confidence intervals, "
         "and the vertical zero line marks no estimated effect. These are partial "
-        "associations within the fitted model, not causal effects."
+        "associations within the fitted multivariate model, not causal effects."
     )
+
     coef_df = render_coefficient_chart(results)
 
     render_coefficient_insight_cards(coef_df)
 
     st.caption(
-        build_coefficient_supporting_insight(coef_df)
+        build_coefficient_supporting_insight(
+            coef_df,
+            target_col=target_col,
+        )
+    )
+
+    st.markdown("### 📈 Modeling Takeaway")
+    st.caption(
+        build_album_modeling_takeaway(
+            coef_df,
+            target_col=target_col,
+        )
     )
 
     if controls["show_coefficient_table"]:

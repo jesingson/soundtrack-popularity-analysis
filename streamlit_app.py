@@ -47,9 +47,9 @@ navigation = st.navigation(
             st.Page("pages/7_Cross_Entity_Explorer.py", title="Cross-Entity Explorer"),
         ],
         "🟪 Modeling & Statistical Analysis": [
-            st.Page("pages/8_Correlation_Explorer.py", title="Correlation Explorer"),
-            st.Page("pages/9_Ridge_Explorer.py", title="Ridge Explorer"),
-            st.Page("pages/10_Regression_Explorer.py", title="Regression Explorer"),
+            st.Page("pages/8_Album_Correlation_Explorer.py", title="Album Correlation Explorer"),
+            st.Page("pages/9_Album_Ridge_Explorer.py", title="Album Ridge Explorer"),
+            st.Page("pages/10_Album_Regression_Explorer.py", title="Album Regression Explorer"),
             st.Page(
                 "pages/40_Track_Correlation_Explorer.py",
                 title="Track Correlation Explorer",

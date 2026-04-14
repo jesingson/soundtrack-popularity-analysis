@@ -20,7 +20,10 @@ from app.explorer_shared import (
     rename_track_page_columns_for_display,
     select_unique_existing_columns,
 )
-from app.ui import apply_app_styles
+from app.ui import (
+    apply_app_styles,
+    get_display_label,
+)
 
 
 TRACK_SUCCESS_ANCHORS = [
@@ -840,6 +843,79 @@ def get_safe_source_display_columns(df: pd.DataFrame) -> list[str]:
     """Return the subset of preferred source-table columns present in the dataframe."""
     return [col for col in SOURCE_DISPLAY_COLUMNS if col in df.columns]
 
+def build_top_redundancy_pairs_table(
+    corr_matrix: pd.DataFrame,
+    top_n: int = 5,
+) -> pd.DataFrame:
+    """Return strongest off-diagonal absolute correlation pairs."""
+    if corr_matrix is None or corr_matrix.empty or corr_matrix.shape[0] < 2:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    cols = list(corr_matrix.columns)
+
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            feature_a = cols[i]
+            feature_b = cols[j]
+            corr_value = float(corr_matrix.iloc[i, j])
+            rows.append(
+                {
+                    "feature_a": feature_a,
+                    "feature_b": feature_b,
+                    "correlation": corr_value,
+                    "abs_correlation": abs(corr_value),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["abs_correlation", "correlation"], ascending=[False, False])
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+def render_redundancy_section(corr_matrix: pd.DataFrame) -> None:
+    """Render a visible-pairs table for the current heatmap scope."""
+    st.subheader("Visible Heatmap Pair Table")
+
+    redundancy_df = build_top_redundancy_pairs_table(corr_matrix, top_n=5)
+
+    if redundancy_df.empty:
+        st.info("Not enough features remain to summarize visible pairwise relationships.")
+        return
+
+    top_pair = redundancy_df.iloc[0]
+
+    st.caption(
+        "This table lists the strongest visible pairwise relationships within the current heatmap scope."
+    )
+    st.caption(
+        f"The strongest visible overlap is **{get_track_page_display_label(str(top_pair['feature_a']))}** "
+        f"vs **{get_track_page_display_label(str(top_pair['feature_b']))}** "
+        f"(absolute correlation = {top_pair['abs_correlation']:.3f})."
+    )
+
+    display_df = redundancy_df.copy()
+    display_df["feature_a"] = display_df["feature_a"].astype(str).map(
+        get_track_page_display_label
+    )
+    display_df["feature_b"] = display_df["feature_b"].astype(str).map(
+        get_track_page_display_label
+    )
+    display_df = display_df.rename(
+        columns={
+            "feature_a": "Feature A",
+            "feature_b": "Feature B",
+            "correlation": "Correlation",
+            "abs_correlation": "Absolute Correlation",
+        }
+    )
+
+    st.dataframe(display_df, width="stretch", hide_index=True)
 
 def main() -> None:
     """Render the Track Correlation Explorer."""
@@ -992,6 +1068,10 @@ def main() -> None:
     else:
         st.altair_chart(create_heatmap_chart(heatmap_matrix), width="stretch")
         st.caption(build_heatmap_supporting_insight(heatmap_matrix))
+
+    st.divider()
+
+    render_redundancy_section(heatmap_matrix)
 
     st.divider()
 

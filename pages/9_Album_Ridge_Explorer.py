@@ -6,7 +6,11 @@ from app.app_controls import get_global_filter_controls, get_ridge_controls
 from app.app_data import load_analysis_data, load_explorer_data, load_ridge_dynamic_groups
 from app.data_filters import filter_dataset
 from app.explorer_shared import get_global_filter_inputs
-from app.ui import apply_app_styles, rename_columns_for_display
+from app.ui import (
+    apply_app_styles,
+    get_display_label,
+    rename_columns_for_display,
+)
 
 
 PRESET_LABELS = {
@@ -21,6 +25,11 @@ PRESET_LABELS = {
     "album_genres": "Album Genres",
     "custom": "Custom Selection",
 }
+
+ALBUM_RIDGE_TARGET_OPTIONS = [
+    "log_lfm_album_listeners",
+    "log_lfm_album_playcount",
+]
 
 EXCLUDED_RIDGE_FEATURES = {
     "album_cohesion_has_audio_data",
@@ -73,6 +82,7 @@ def build_ridge_presets(
 def build_ridge_outputs_for_features(
     album_analytics_df,
     selected_features: tuple[str, ...],
+    target_col: str,
     bins: int,
     smooth_window: int,
     min_group_n: int,
@@ -94,7 +104,7 @@ def build_ridge_outputs_for_features(
 
     ridge_config = ridge.get_ridge_feature_config(
         albums_df=album_analytics_df,
-        y_col="log_lfm_album_listeners",
+        y_col=target_col,
         feature_groups=feature_groups,
         feature_labels=ridge.DEFAULT_FEATURE_LABELS,
     )
@@ -137,6 +147,7 @@ def build_ridge_scope_caption(
     selected_features: list[str],
     n_ridges: int,
     n_albums: int,
+    target_col: str,
 ) -> str:
     """
     Build a short caption describing the current ridge scope.
@@ -161,7 +172,8 @@ def build_ridge_scope_caption(
     )
 
     return (
-        f"Current scope: {mode_phrase}, {n_albums:,} visible albums, showing "
+        f"Current scope: target = {get_display_label(target_col)}, "
+        f"{mode_phrase}, {n_albums:,} visible albums, showing "
         f"{n_ridges} binary feature splits with {controls['bins']} density bins, "
         f"smoothing window {controls['smooth_window']}, and minimum group size "
         f"{controls['min_group_n']}."
@@ -170,6 +182,7 @@ def build_ridge_scope_caption(
 
 def build_ridge_insight_summary(
     order_df,
+    target_col: str,
 ) -> dict[str, str]:
     """
     Build a compact narrative summary from the ridge ordering dataframe.
@@ -205,19 +218,22 @@ def build_ridge_insight_summary(
         direction_value = "Yes above No"
         direction_caption = (
             f"For the top split, '{top_feature_label}', the Yes group median "
-            f"({top_yes:.3f}) is above the No group median ({top_no:.3f})."
+            f"{get_display_label(target_col).lower()} ({top_yes:.3f}) is above "
+            f"the No group median ({top_no:.3f})."
         )
     elif top_yes < top_no:
         direction_value = "No above Yes"
         direction_caption = (
             f"For the top split, '{top_feature_label}', the No group median "
-            f"({top_no:.3f}) is above the Yes group median ({top_yes:.3f})."
+            f"{get_display_label(target_col).lower()} ({top_no:.3f}) is above "
+            f"the Yes group median ({top_yes:.3f})."
         )
     else:
         direction_value = "Tie"
         direction_caption = (
             f"For the top split, '{top_feature_label}', the Yes and No group "
-            f"medians are equal at {top_yes:.3f}."
+            f"medians are equal at {top_yes:.3f} for "
+            f"{get_display_label(target_col).lower()}."
         )
 
     mean_gap = float(order_df["median_gap"].mean())
@@ -241,14 +257,14 @@ def build_ridge_insight_summary(
     }
 
 
-def render_ridge_insight_cards(order_df) -> None:
+def render_ridge_insight_cards(order_df, target_col: str) -> None:
     """
     Render the three narrative insight cards for the ridge page.
 
     Args:
         order_df: Ridge ordering dataframe.
     """
-    insights = build_ridge_insight_summary(order_df)
+    insights = build_ridge_insight_summary(order_df, target_col=target_col)
 
     st.markdown("### 🧠 Key Insights")
     col1, col2, col3 = st.columns(3)
@@ -275,7 +291,7 @@ def render_ridge_insight_cards(order_df) -> None:
         st.caption(insights["card3_caption"])
 
 
-def build_ridge_supporting_insight(order_df) -> str:
+def build_ridge_supporting_insight(order_df, target_col: str) -> str:
     """
     Build a short supporting sentence for the main ridge chart.
 
@@ -295,10 +311,10 @@ def build_ridge_supporting_insight(order_df) -> str:
     bottom_gap = float(order_df.iloc[-1]["median_gap"])
 
     return (
-        f"💡 Rows are ordered by median separation, so '{top_feature_label}' "
-        f"shows the strongest visible split ({top_gap:.3f}), while "
-        f"'{bottom_feature_label}' is the weakest visible split "
-        f"({bottom_gap:.3f}) under the current settings."
+        f"💡 Rows are ordered by median separation in {get_display_label(target_col).lower()}, "
+        f"so '{top_feature_label}' shows the strongest visible split ({top_gap:.3f}), while "
+        f"'{bottom_feature_label}' is the weakest visible split ({bottom_gap:.3f}) "
+        f"under the current settings."
     )
 
 
@@ -331,50 +347,81 @@ def attach_ridge_filter_metadata(
     album_explorer_df,
 ):
     """
-    Merge explorer-style global filter metadata onto the analysis dataframe.
+    Merge explorer-style global filter metadata and missing outcome fields
+    onto the analysis dataframe.
 
-    This lets the ridge page use shared global filters (film year, film genres,
-    album genres) without changing the underlying analysis dataset used by the
-    ridge pipeline.
-
-    Args:
-        album_analytics_df: Narrow analysis-ready album dataframe.
-        album_explorer_df: Rich explorer dataframe containing filter metadata.
-
-    Returns:
-        pd.DataFrame: Analysis dataframe with filter metadata columns attached.
+    This keeps the ridge pipeline based on the narrow analysis dataframe
+    while enriching it with:
+    - shared global-filter metadata
+    - album playcount target fields if they are missing
     """
+    analysis_df = album_analytics_df.copy()
+    explorer_df = album_explorer_df.copy()
+
     merge_keys = [
         col for col in ["release_group_mbid", "tmdb_id"]
-        if col in album_analytics_df.columns and col in album_explorer_df.columns
+        if col in analysis_df.columns and col in explorer_df.columns
+    ]
+
+    if not merge_keys:
+        return analysis_df
+
+    candidate_metadata_cols = [
+        "release_group_mbid",
+        "tmdb_id",
+        "film_year",
+        "film_genres",
+        "album_genres_display",
+        "lfm_album_listeners",
+        "lfm_album_playcount",
+        "log_lfm_album_listeners",
+        "log_lfm_album_playcount",
     ]
 
     metadata_cols = [
-        col for col in [
-            "release_group_mbid",
-            "tmdb_id",
-            "film_year",
-            "film_genres",
-            "album_genres_display",
-        ]
-        if col in album_explorer_df.columns
+        col for col in candidate_metadata_cols
+        if col in explorer_df.columns
     ]
 
-    if not merge_keys or len(metadata_cols) <= len(merge_keys):
-        return album_analytics_df.copy()
+    # Only merge in fields that are not already present on the analysis frame,
+    # plus the merge keys required to join.
+    cols_to_add = [
+        col for col in metadata_cols
+        if col in merge_keys or col not in analysis_df.columns
+    ]
 
-    metadata_df = (
-        album_explorer_df[metadata_cols]
-        .drop_duplicates(subset=merge_keys)
-        .copy()
-    )
+    if len(cols_to_add) <= len(merge_keys):
+        merged_df = analysis_df.copy()
+    else:
+        metadata_df = (
+            explorer_df[cols_to_add]
+            .drop_duplicates(subset=merge_keys)
+            .copy()
+        )
 
-    merged_df = album_analytics_df.merge(
-        metadata_df,
-        on=merge_keys,
-        how="left",
-        validate="1:1",
-    )
+        merged_df = analysis_df.merge(
+            metadata_df,
+            on=merge_keys,
+            how="left",
+            validate="1:1",
+        )
+
+    # Backfill missing log outcome columns if raw values are available.
+    if (
+        "log_lfm_album_playcount" not in merged_df.columns
+        and "lfm_album_playcount" in merged_df.columns
+    ):
+        merged_df["log_lfm_album_playcount"] = np.log1p(
+            pd.to_numeric(merged_df["lfm_album_playcount"], errors="coerce")
+        )
+
+    if (
+        "log_lfm_album_listeners" not in merged_df.columns
+        and "lfm_album_listeners" in merged_df.columns
+    ):
+        merged_df["log_lfm_album_listeners"] = np.log1p(
+            pd.to_numeric(merged_df["lfm_album_listeners"], errors="coerce")
+        )
 
     return merged_df
 
@@ -383,19 +430,15 @@ def main() -> None:
     Run the Ridge Explorer Streamlit page.
     """
     st.set_page_config(
-        page_title="Ridge Explorer",
+        page_title="Album Ridge Explorer",
         layout="wide",
     )
     apply_app_styles()
 
-    st.title("Ridge Explorer")
-    st.write(
-        """
-        Compare soundtrack listener distributions across binary feature splits.
-        This page is designed to show which feature-based Yes/No groupings most
-        clearly separate listener outcomes, while preserving the validated
-        ridge-density pipeline used in the notebook workflow.
-        """
+    st.title("Album Ridge Explorer")
+    st.caption(
+        "Compare how album-success distributions shift across binary feature splits "
+        "while preserving the validated ridge-density workflow."
     )
 
     album_analytics_df = load_analysis_data()
@@ -439,11 +482,14 @@ def main() -> None:
     preset_keys = list(PRESET_LABELS.keys())
 
     controls = get_ridge_controls(
+        target_options=ALBUM_RIDGE_TARGET_OPTIONS,
         preset_labels=PRESET_LABELS,
         preset_keys=preset_keys,
         all_available_features=all_available_features,
         default_custom_features=ridge.DEFAULT_RIDGE_GROUPS["core_static"],
     )
+
+    target_col = controls.get("target_col", "log_lfm_album_listeners")
 
     preset_registry = build_ridge_presets(
         album_analytics_df=filtered_album_df,
@@ -462,6 +508,7 @@ def main() -> None:
     ridge_outputs, phase2_outputs = build_ridge_outputs_for_features(
         album_analytics_df=filtered_album_df,
         selected_features=tuple(selected_features),
+        target_col=target_col,
         bins=controls["bins"],
         smooth_window=controls["smooth_window"],
         min_group_n=controls["min_group_n"],
@@ -473,8 +520,8 @@ def main() -> None:
     chart_height = max(500, n_ridges * 32)
 
     subtitle_lines = [
-        f"Preset: {PRESET_LABELS[controls['preset_key']]} | Features shown: {n_ridges}",
-        "Rows are ordered by absolute median listener gap between Yes and No groups.",
+        f"Target: {get_display_label(target_col)} | Preset: {PRESET_LABELS[controls['preset_key']]} | Features shown: {n_ridges}",
+        "Rows are ordered by absolute median gap between Yes and No groups.",
     ]
 
     chart = ridge_viz.create_ridge_chart(
@@ -493,10 +540,11 @@ def main() -> None:
             selected_features=selected_features,
             n_ridges=n_ridges,
             n_albums=len(filtered_album_df),
+            target_col=target_col,
         )
     )
 
-    render_ridge_insight_cards(order_df)
+    render_ridge_insight_cards(order_df, target_col=target_col)
 
     st.caption(
         build_selected_feature_caption(
@@ -508,7 +556,7 @@ def main() -> None:
     st.altair_chart(chart, width="stretch")
 
     st.caption(
-        build_ridge_supporting_insight(order_df)
+        build_ridge_supporting_insight(order_df, target_col=target_col)
     )
 
     if controls["show_order_table"]:
