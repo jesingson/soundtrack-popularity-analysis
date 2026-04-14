@@ -24,6 +24,10 @@ ALBUM_REGRESSION_TARGET_CANDIDATES = [
     "log_lfm_album_playcount",
 ]
 
+EXCLUDED_MODEL_COLS = {
+    "album_cohesion_has_audio_data",
+}
+
 def attach_regression_filter_metadata(
     album_analytics_df,
     album_explorer_df,
@@ -496,12 +500,32 @@ def main() -> None:
         if col in filtered_album_df.columns
     ]
 
+    exclude_feature_options = sorted(
+        [
+            col for col in filtered_album_df.columns
+            if col not in {
+            "tmdb_id",
+            "release_group_mbid",
+            "film_year",
+            "film_genres",
+            "album_genres_display",
+            "lfm_album_listeners",
+            "lfm_album_playcount",
+            "log_lfm_album_listeners",
+            "log_lfm_album_playcount",
+            "album_cohesion_has_audio_data",
+        }
+        ]
+    )
+
     controls = get_regression_controls(
         target_options=available_target_options,
+        exclude_feature_options=exclude_feature_options,
     )
 
     target_col = controls.get("target_col", "log_lfm_album_listeners")
     threshold = controls["threshold"]
+    excluded_features = list(set(EXCLUDED_MODEL_COLS | set(controls["excluded_features"])))
 
     if target_col not in filtered_album_df.columns:
         st.error(
@@ -513,6 +537,7 @@ def main() -> None:
         album_analytics_df=filtered_album_df,
         target_col=target_col,
         threshold=threshold,
+        excluded_features=excluded_features,
     )
 
     filter_results = regression_results["filter_results"]

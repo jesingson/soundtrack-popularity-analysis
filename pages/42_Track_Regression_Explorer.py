@@ -211,13 +211,36 @@ def main() -> None:
         st.warning("No tracks remain under the current global filters.")
         st.stop()
 
+    exclude_feature_options = sorted(
+        [
+            col for col in filtered_track_df.columns
+            if col not in {
+            "tmdb_id",
+            "release_group_mbid",
+            "film_year",
+            "film_genres",
+            "album_genres_display",
+            "lfm_track_listeners",
+            "lfm_track_playcount",
+            "spotify_popularity",
+            "log_lfm_track_listeners",
+            "log_lfm_track_playcount",
+            "album_cohesion_has_audio_data",
+            "track_audio_feature_count",
+            "track_has_any_audio_features",
+        }
+        ]
+    )
+
     regression_controls = get_track_regression_controls(
         target_options=TRACK_REGRESSION_TARGET_OPTIONS,
+        exclude_feature_options=exclude_feature_options,
     )
 
     target_col = regression_controls["target_col"]
     threshold = regression_controls["threshold"]
     use_context_controls = regression_controls["include_context_controls"]
+    excluded_features = regression_controls["excluded_features"]
     show_coefficient_table = regression_controls["show_coefficient_table"]
     show_filter_summary = regression_controls["show_filter_summary"]
     show_transform_summary = regression_controls["show_transform_summary"]
@@ -230,6 +253,7 @@ def main() -> None:
         threshold=threshold,
         include_context_controls=use_context_controls,
         global_controls=global_controls,
+        excluded_features=excluded_features,
     )
 
     n_rows = regression_results["ols_results"]["n_rows"]

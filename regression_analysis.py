@@ -388,9 +388,10 @@ def fit_final_ols_model(
 
 
 def run_regression_pipeline(
-        album_analytics_df: pd.DataFrame,
-        target_col: str = TARGET_COL,
-        threshold: float = 0.05,
+    album_analytics_df: pd.DataFrame,
+    target_col: str,
+    threshold: float = 0.05,
+    excluded_features: list[str] | None = None,
 ) -> dict:
     """
     Run the full regression-preparation and OLS modeling workflow.
@@ -417,6 +418,18 @@ def run_regression_pipeline(
         target_col=target_col,
         threshold=threshold,
     )
+
+    hard_excluded_features = {"album_cohesion_has_audio_data"}
+    excluded_feature_set = set(excluded_features or []) | hard_excluded_features
+
+    feature_config["continuous_features"] = [
+        col for col in feature_config["continuous_features"]
+        if col not in excluded_feature_set
+    ]
+    feature_config["binary_features"] = [
+        col for col in feature_config["binary_features"]
+        if col not in excluded_feature_set
+    ]
 
     filter_results = filter_continuous_features_by_correlation(
         album_analytics_df=album_analytics_df,

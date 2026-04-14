@@ -1197,13 +1197,16 @@ def get_ridge_controls(
 # PAGE 10 Controls
 def get_regression_controls(
     target_options: list[str] | None = None,
+    exclude_feature_options: list[str] | None = None,
 ) -> dict:
     """
     Render sidebar controls for the regression explorer.
 
     Args:
         target_options: Optional list of outcome columns to expose as a
-            target selector. If omitted, no target selector is shown.
+            target selector.
+        exclude_feature_options: Optional list of predictors that the user
+            may explicitly exclude from the model.
 
     Returns:
         dict: Selected control values.
@@ -1230,6 +1233,19 @@ def get_regression_controls(
             "predictor during the initial filtering step."
         ),
     )
+
+    excluded_features = []
+    if exclude_feature_options:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Model specification")
+
+        excluded_features = st.sidebar.multiselect(
+            "Exclude predictors",
+            options=exclude_feature_options,
+            default=[],
+            format_func=get_display_label,
+            help="Remove selected predictors from the regression model.",
+        )
 
     st.sidebar.markdown("---")
 
@@ -1261,6 +1277,7 @@ def get_regression_controls(
     return {
         "target_col": controls.get("target_col"),
         "threshold": threshold,
+        "excluded_features": excluded_features,
         "show_coefficient_table": show_coefficient_table,
         "show_filter_summary": show_filter_summary,
         "show_transform_summary": show_transform_summary,
@@ -2707,12 +2724,15 @@ def get_track_ridge_controls(
 # Page 42 Controls
 def get_track_regression_controls(
     target_options: list[str],
+    exclude_feature_options: list[str] | None = None,
 ) -> dict:
     """
     Render sidebar controls for the Track Regression Explorer.
 
     Args:
         target_options: Available track regression target columns.
+        exclude_feature_options: Optional list of predictors that the user
+            may explicitly exclude from the model.
 
     Returns:
         dict: Selected control values.
@@ -2744,6 +2764,19 @@ def get_track_regression_controls(
         ),
     )
 
+    excluded_features = []
+    if exclude_feature_options:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Model specification")
+
+        excluded_features = st.sidebar.multiselect(
+            "Exclude predictors",
+            options=exclude_feature_options,
+            default=[],
+            format_func=get_track_page_display_label,
+            help="Remove selected predictors from the regression model.",
+        )
+
     show_coefficient_table = st.sidebar.checkbox(
         "Show coefficient table",
         value=True,
@@ -2769,6 +2802,7 @@ def get_track_regression_controls(
         "target_col": target_col,
         "threshold": threshold,
         "include_context_controls": include_context_controls,
+        "excluded_features": excluded_features,
         "show_coefficient_table": show_coefficient_table,
         "show_filter_summary": show_filter_summary,
         "show_transform_summary": show_transform_summary,

@@ -86,6 +86,12 @@ TRACK_CONTEXT_BINARY_FEATURES = [
     "bafta_nominee",
 ]
 
+TRACK_PIPELINE_ARTIFACT_EXCLUSIONS = {
+    "album_cohesion_has_audio_data",
+    "track_audio_feature_count",
+    "track_has_any_audio_features",
+}
+
 def define_track_regression_features(
     track_df: pd.DataFrame,
     target_col: str = "log_lfm_track_playcount",
@@ -158,7 +164,10 @@ def get_track_leakage_exclusions(target_col: str) -> set[str]:
         "lfm_album_listeners",
         "lfm_album_playcount",
         "album_cohesion_has_audio_data",
+        "track_audio_feature_count",
+        "track_has_any_audio_features",
     })
+    exclusions.update(TRACK_PIPELINE_ARTIFACT_EXCLUSIONS)
 
     return exclusions
 
@@ -388,6 +397,7 @@ def run_track_regression_pipeline(
     threshold: float = 0.05,
     include_context_controls: bool = True,
     global_controls: dict | None = None,
+    excluded_features: list[str] | None = None,
 ) -> dict:
     """
     Run the full track regression pipeline.
@@ -397,6 +407,34 @@ def run_track_regression_pipeline(
         target_col=target_col,
         threshold=threshold,
     )
+
+    hard_excluded_features = {
+        "album_cohesion_has_audio_data",
+        "track_audio_feature_count",
+        "track_has_any_audio_features",
+    }
+    excluded_feature_set = set(excluded_features or []) | hard_excluded_features
+
+    feature_config["continuous_features"] = [
+        col for col in feature_config["continuous_features"]
+        if col not in excluded_feature_set
+    ]
+    feature_config["binary_features"] = [
+        col for col in feature_config["binary_features"]
+        if col not in excluded_feature_set
+    ]
+    feature_config["film_controls"] = [
+        col for col in feature_config["film_controls"]
+        if col not in excluded_feature_set
+    ]
+    feature_config["album_controls"] = [
+        col for col in feature_config["album_controls"]
+        if col not in excluded_feature_set
+    ]
+    feature_config["context_binary_features"] = [
+        col for col in feature_config["context_binary_features"]
+        if col not in excluded_feature_set
+    ]
 
     filter_based_exclusions = get_track_filter_based_exclusions(global_controls)
 
