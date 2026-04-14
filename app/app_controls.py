@@ -2118,6 +2118,174 @@ def get_track_ecosystem_controls(
         "show_track_table": show_track_table,
     }
 
+# Page 35 Controls
+def get_track_sequence_controls(
+    comparison_dimension_options: list[str],
+    audio_feature_options: list[str],
+) -> dict:
+    """Render sidebar controls for the Track Sequence Breakpoints Explorer."""
+    st.sidebar.header("Sequence Ribbon Controls")
+
+    metric = st.sidebar.selectbox(
+        "Audio feature",
+        options=audio_feature_options,
+        index=0,
+        help="Select the audio feature traced across normalized track position.",
+    )
+
+    comparison_dimension = st.sidebar.selectbox(
+        "Compare by",
+        options=comparison_dimension_options,
+        index=1,
+        help="Choose which grouping dimension defines the ribbons.",
+    )
+
+    max_groups = st.sidebar.slider(
+        "Maximum visible groups",
+        min_value=2,
+        max_value=7,
+        value=4,
+        step=1,
+        help="Hard cap on the number of ribbons rendered at once.",
+    )
+
+    min_albums_per_group = st.sidebar.slider(
+        "Minimum albums per group",
+        min_value=1,
+        max_value=20,
+        value=5,
+        step=1,
+        help="Hide sparse groups with too few visible albums.",
+    )
+
+    n_bins = st.sidebar.slider(
+        "Normalized position bins",
+        min_value=10,
+        max_value=30,
+        value=20,
+        step=1,
+        help="Controls how finely track positions are normalized across albums.",
+    )
+
+    smoothing_window = st.sidebar.slider(
+        "Smoothing window",
+        min_value=1,
+        max_value=7,
+        value=3,
+        step=1,
+        help="Applies centered rolling smoothing to the line and ribbon bounds.",
+    )
+
+    center_stat = st.sidebar.selectbox(
+        "Center line",
+        options=["Median", "Mean"],
+        index=0,
+        help="Choose whether the ribbon center traces the median or mean.",
+    )
+
+    ribbon_range = st.sidebar.selectbox(
+        "Ribbon width",
+        options=[
+            "Middle 5%",
+            "Middle 10%",
+            "Middle 20%",
+            "IQR",
+            "Mean ± 0.25 SD",
+            "Mean ± 0.5 SD",
+        ],
+        index=0,
+        help="Controls how tight or wide the comparison ribbons appear.",
+    )
+
+    show_ribbon = st.sidebar.checkbox(
+        "Show ribbons",
+        value=True,
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Horizon Chart")
+
+    show_horizon = st.sidebar.checkbox(
+        "Show album horizon chart",
+        value=True,
+    )
+
+    horizon_normalization = st.sidebar.selectbox(
+        "Horizon normalization",
+        options=["Album-centered shape", "Group-centered deviation"],
+        index=0,
+        help="Album-centered emphasizes internal album shape; group-centered highlights albums that deviate from their group norm.",
+    )
+
+    albums_per_group = st.sidebar.slider(
+        "Albums per group",
+        min_value=5,
+        max_value=25,
+        value=10,
+        step=1,
+        help="Maximum number of albums shown per selected group in the horizon chart.",
+    )
+
+    horizon_sort = st.sidebar.selectbox(
+        "Horizon row sort",
+        options=[
+            "Group, then album listeners",
+            "Group, then album title",
+            "Album listeners (global)",
+            "Album title (global)",
+        ],
+        index=0,
+        help="Choose whether horizon rows stay clustered by the selected groups or are sorted globally.",
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Track Filters")
+
+    search_text = st.sidebar.text_input(
+        "Search track, album, film, composer, or label",
+        value="",
+    )
+
+    max_track_position = st.sidebar.slider(
+        "Maximum track position",
+        min_value=5,
+        max_value=40,
+        value=20,
+        step=1,
+    )
+
+    min_album_listeners = st.sidebar.number_input(
+        "Minimum album listeners",
+        min_value=0,
+        value=0,
+        step=100,
+    )
+
+    audio_only = st.sidebar.checkbox(
+        "Only tracks with selected feature present",
+        value=True,
+    )
+
+    return {
+        "metric": metric,
+        "comparison_dimension": comparison_dimension,
+        "max_groups": max_groups,
+        "min_albums_per_group": min_albums_per_group,
+        "n_bins": n_bins,
+        "smoothing_window": smoothing_window,
+        "center_stat": center_stat,
+        "ribbon_range": ribbon_range,
+        "show_ribbon": show_ribbon,
+        "show_horizon": show_horizon,
+        "horizon_normalization": horizon_normalization,
+        "albums_per_group": albums_per_group,
+        "horizon_sort": horizon_sort,
+        "search_text": search_text,
+        "max_track_position": max_track_position,
+        "min_album_listeners": min_album_listeners,
+        "audio_only": audio_only,
+    }
+
 # Page 40 Controls
 def get_track_correlation_controls(
     composer_options: list[str],
