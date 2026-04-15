@@ -451,8 +451,11 @@ def get_scatter_controls(
         x_col = selected_feature
         y_col = default_y
         color_col = "None"
+        size_col = "None"
         transform_x = "None"
         transform_y = "None"
+        show_median_lines = False
+        bubble_max_size = 220
         apply_jitter = False
         jitter_strength = 0.0
 
@@ -502,6 +505,14 @@ def get_scatter_controls(
             format_func=lambda x: "None" if x == "None" else get_display_label(x),
         )
 
+        size_col = st.sidebar.selectbox(
+            "Bubble size",
+            options=["None"] + freeform_numeric_options,
+            index=0,
+            format_func=lambda x: "None" if x == "None" else get_display_label(x),
+            help="Optionally size points by another numeric variable.",
+        )
+
         st.sidebar.markdown("---")
         st.sidebar.caption("Display and scale controls")
 
@@ -526,6 +537,21 @@ def get_scatter_controls(
             "Transform Y",
             options=["None", "Log1p"],
             index=0 if default_transform_y == "None" else 1,
+        )
+
+        show_median_lines = st.sidebar.checkbox(
+            "Show median reference lines",
+            value=False,
+            help="Draw vertical and horizontal median lines on the visible scatterplot.",
+        )
+
+        bubble_max_size = st.sidebar.slider(
+            "Bubble max size",
+            min_value=100,
+            max_value=6000,
+            value=1200,
+            step=100,
+            help="Maximum bubble area when bubble sizing is enabled.",
         )
 
         apply_jitter = st.sidebar.checkbox(
@@ -568,8 +594,11 @@ def get_scatter_controls(
         "x_col": x_col,
         "y_col": y_col,
         "color_col": color_col,
+        "size_col": size_col,
         "transform_x": transform_x,
         "transform_y": transform_y,
+        "show_median_lines": show_median_lines,
+        "bubble_max_size": bubble_max_size,
         "apply_jitter": apply_jitter,
         "jitter_strength": jitter_strength,
         "show_trendline": show_trendline,
@@ -1274,6 +1303,16 @@ def get_regression_controls(
         value=False,
     )
 
+    show_residual_qq = st.sidebar.checkbox(
+        "Show residual Q-Q plot",
+        value=True,
+    )
+
+    show_target_qq = st.sidebar.checkbox(
+        "Show raw vs log target Q-Q plots",
+        value=False,
+    )
+
     return {
         "target_col": controls.get("target_col"),
         "threshold": threshold,
@@ -1283,6 +1322,8 @@ def get_regression_controls(
         "show_transform_summary": show_transform_summary,
         "show_finalize_summary": show_finalize_summary,
         "show_model_summary": show_model_summary,
+        "show_residual_qq": show_residual_qq,
+        "show_target_qq": show_target_qq,
     }
 
 # PAGE 20 Controls
@@ -2032,16 +2073,27 @@ def get_track_relationship_controls(
         ),
     )
 
+    scatter_mode = chart_mode == "Scatter"
+
     color_col = st.sidebar.selectbox(
         "Color grouping",
         options=["None"] + color_options,
         index=0,
-        disabled=(chart_mode != "Scatter"),
+        disabled=not scatter_mode,
         format_func=lambda x: "None" if x == "None" else get_display_label(x),
         help=(
             "Color grouping is only available in Scatter mode, where individual "
             "tracks are drawn as points."
         ),
+    )
+
+    size_col = st.sidebar.selectbox(
+        "Bubble size",
+        options=["None"] + numeric_options,
+        index=0,
+        disabled=not scatter_mode,
+        format_func=lambda x: "None" if x == "None" else get_display_label(x),
+        help="Optionally size points by another numeric variable.",
     )
 
     st.sidebar.markdown("---")
@@ -2059,27 +2111,22 @@ def get_track_relationship_controls(
         index=0,
     )
 
-    heatmap_bins = st.sidebar.slider(
-        "Heatmap bins",
-        min_value=10,
-        max_value=60,
-        value=30,
-        step=5,
-        help="Controls the grid resolution for density and quantile heatmaps.",
-    )
+    if scatter_mode:
+        show_median_lines = st.sidebar.checkbox(
+            "Show median reference lines",
+            value=False,
+            help="Draw vertical and horizontal median lines on the visible scatterplot.",
+        )
 
-    quantile_stat = st.sidebar.selectbox(
-        "Quantile heatmap statistic",
-        options=["Mean Y", "Median Y", "Count"],
-        index=0,
-        disabled=(chart_mode != "Quantile Heatmap"),
-        help=(
-            "Choose what each heatmap cell summarizes. Mean/Median Y are most useful "
-            "for outcome-style views; Count shows raw occupancy."
-        ),
-    )
+        bubble_max_size = st.sidebar.slider(
+            "Bubble max size",
+            min_value=100,
+            max_value=6000,
+            value=1200,
+            step=100,
+            help="Maximum bubble area when bubble sizing is enabled.",
+        )
 
-    if chart_mode == "Scatter":
         apply_jitter = st.sidebar.checkbox(
             "Jitter points",
             value=False,
@@ -2101,10 +2148,35 @@ def get_track_relationship_controls(
             "Show fitted line",
             value=True,
         )
+
+        heatmap_bins = 30
+        quantile_stat = "Mean Y"
     else:
+        show_median_lines = False
+        bubble_max_size = 220
         apply_jitter = False
         jitter_strength = 0.0
         show_trendline = False
+
+        heatmap_bins = st.sidebar.slider(
+            "Heatmap bins",
+            min_value=10,
+            max_value=60,
+            value=30,
+            step=5,
+            help="Controls the grid resolution for density and quantile heatmaps.",
+        )
+
+        quantile_stat = st.sidebar.selectbox(
+            "Quantile heatmap statistic",
+            options=["Mean Y", "Median Y", "Count"],
+            index=0,
+            disabled=(chart_mode != "Quantile Heatmap"),
+            help=(
+                "Choose what each heatmap cell summarizes. Mean/Median Y are most useful "
+                "for outcome-style views; Count shows raw occupancy."
+            ),
+        )
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Track Filters")
@@ -2150,6 +2222,7 @@ def get_track_relationship_controls(
         "y_col": y_col,
         "chart_mode": chart_mode,
         "color_col": color_col,
+        "size_col": size_col if scatter_mode else "None",
         "transform_x": transform_x,
         "transform_y": transform_y,
         "heatmap_bins": heatmap_bins,
@@ -2157,6 +2230,8 @@ def get_track_relationship_controls(
         "apply_jitter": apply_jitter,
         "jitter_strength": jitter_strength,
         "show_trendline": show_trendline,
+        "show_median_lines": show_median_lines,
+        "bubble_max_size": bubble_max_size,
         "selected_composers": selected_composers,
         "search_text": search_text,
         "max_track_position": max_track_position,
@@ -2798,6 +2873,16 @@ def get_track_regression_controls(
         value=False,
     )
 
+    show_residual_qq = st.sidebar.checkbox(
+        "Show residual Q-Q plot",
+        value=True,
+    )
+
+    show_target_qq = st.sidebar.checkbox(
+        "Show raw vs log target Q-Q plots",
+        value=False,
+    )
+
     return {
         "target_col": target_col,
         "threshold": threshold,
@@ -2808,4 +2893,6 @@ def get_track_regression_controls(
         "show_transform_summary": show_transform_summary,
         "show_finalize_summary": show_finalize_summary,
         "show_model_summary": show_model_summary,
+        "show_residual_qq": show_residual_qq,
+        "show_target_qq": show_target_qq,
     }

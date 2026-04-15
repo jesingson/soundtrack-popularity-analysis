@@ -157,6 +157,12 @@ def build_relationship_context_caption(controls: dict) -> str:
     if controls["color_col"] != "None":
         extras.append(f"color = {get_track_page_display_label(controls['color_col'])}")
 
+    if controls["size_col"] != "None":
+        extras.append(f"bubble size = {get_track_page_display_label(controls['size_col'])}")
+
+    if controls["show_median_lines"]:
+        extras.append("median reference lines shown")
+
     if controls["transform_x"] != "None" or controls["transform_y"] != "None":
         transform_bits = []
         if controls["transform_x"] != "None":
@@ -180,6 +186,7 @@ def build_freeform_scatter_data(
     x_col: str,
     y_col: str,
     color_col: str | None = None,
+    size_col: str | None = None,
     transform_x: str = "None",
     transform_y: str = "None",
     apply_jitter: bool = False,
@@ -187,6 +194,10 @@ def build_freeform_scatter_data(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, dict]:
     """Build freeform scatterplot data for arbitrary track-level numeric X and Y columns."""
     required_cols = [x_col, y_col]
+
+    if size_col and size_col != "None":
+        required_cols.append(size_col)
+
     if color_col and color_col != "None":
         required_cols.append(color_col)
 
@@ -201,6 +212,22 @@ def build_freeform_scatter_data(
 
     plot_df["x_raw"] = pd.to_numeric(plot_df[x_col], errors="coerce")
     plot_df["y_raw"] = pd.to_numeric(plot_df[y_col], errors="coerce")
+
+    if size_col and size_col != "None":
+        plot_df["size_raw"] = pd.to_numeric(plot_df[size_col], errors="coerce")
+    else:
+        plot_df["size_raw"] = np.nan
+
+    zero_means_missing_cols = {"film_budget", "film_revenue"}
+
+    if x_col in zero_means_missing_cols:
+        plot_df.loc[plot_df["x_raw"] <= 0, "x_raw"] = np.nan
+
+    if y_col in zero_means_missing_cols:
+        plot_df.loc[plot_df["y_raw"] <= 0, "y_raw"] = np.nan
+
+    if size_col in zero_means_missing_cols:
+        plot_df.loc[plot_df["size_raw"] <= 0, "size_raw"] = np.nan
 
     if transform_x == "Log1p":
         if (plot_df["x_raw"] < 0).any():
@@ -255,6 +282,25 @@ def build_freeform_scatter_data(
             scale=y_scale * jitter_strength,
             size=len(plot_df),
         )
+    if size_col and size_col != "None":
+        size_series = plot_df["size_raw"].clip(lower=0)
+
+        if size_series.notna().sum() > 0:
+            upper_cap = float(size_series.quantile(0.98))
+            if upper_cap <= 0:
+                upper_cap = float(size_series.max())
+        else:
+            upper_cap = 1.0
+
+        if not np.isfinite(upper_cap) or upper_cap <= 0:
+            upper_cap = 1.0
+
+        plot_df["size_scaled_raw"] = size_series.clip(upper=upper_cap)
+    else:
+        plot_df["size_scaled_raw"] = np.nan
+
+    x_median = float(plot_df["x_value"].median())
+    y_median = float(plot_df["y_value"].median())
 
     x_display = get_track_page_display_label(x_col)
     y_display = get_track_page_display_label(y_col)
@@ -278,6 +324,10 @@ def build_freeform_scatter_data(
             else "Negative" if pearson_r < -0.05
             else "Near-zero"
         ),
+        "size_col": size_col,
+        "size_scale_max": float(plot_df["size_scaled_raw"].max()) if size_col and size_col != "None" else None,
+        "x_median": x_median,
+        "y_median": y_median,
     }
 
     return plot_df, line_df, metrics
@@ -560,7 +610,7 @@ def create_freeform_scatter_chart(
     plot_df: pd.DataFrame,
     line_df: pd.DataFrame | None,
     metrics: dict,
-    show_trendline: bool,
+    controls: dict,
 ) -> alt.Chart:
     """Create a freeform scatterplot for arbitrary numeric X and Y columns."""
     tooltip_fields = []
@@ -604,12 +654,22 @@ def create_freeform_scatter_chart(
             )
         )
 
+    if metrics["size_col"] and metrics["size_col"] != "None":
+        tooltip_fields.append(
+            alt.Tooltip(
+                "size_raw:Q",
+                title=get_track_page_display_label(metrics["size_col"]),
+                format=",.3f",
+            )
+        )
+
     if metrics["color_col"] and metrics["color_col"] != "None":
+        color_label = get_track_page_display_label(metrics["color_col"])
         if pd.api.types.is_numeric_dtype(plot_df[metrics["color_col"]]):
             tooltip_fields.append(
                 alt.Tooltip(
                     f"{metrics['color_col']}:Q",
-                    title=get_track_page_display_label(metrics["color_col"]),
+                    title=color_label,
                     format=",.3f",
                 )
             )
@@ -617,33 +677,99 @@ def create_freeform_scatter_chart(
             tooltip_fields.append(
                 alt.Tooltip(
                     f"{metrics['color_col']}:N",
-                    title=get_track_page_display_label(metrics["color_col"]),
+                    title=color_label,
                 )
             )
 
-    base = (
-        alt.Chart(plot_df)
-        .mark_circle(opacity=0.35, size=45)
-        .encode(
-            x=alt.X("x_plot:Q", title=metrics["x_axis_title"]),
-            y=alt.Y("y_plot:Q", title=metrics["y_axis_title"]),
-            tooltip=tooltip_fields,
-        )
+    base = alt.Chart(plot_df).mark_circle(
+        opacity=0.45,
+        filled=True,
+        stroke="white",
+        strokeWidth=0.2,
+    ).encode(
+        x=alt.X("x_plot:Q", title=metrics["x_axis_title"]),
+        y=alt.Y("y_plot:Q", title=metrics["y_axis_title"]),
+        tooltip=tooltip_fields,
     )
+
+    color_legend_orient = "right"
+    if metrics["color_col"] and metrics["color_col"] != "None":
+        n_color_groups = plot_df[metrics["color_col"]].dropna().nunique()
+        if n_color_groups > 8:
+            color_legend_orient = "bottom"
 
     if metrics["color_col"] and metrics["color_col"] != "None":
         points = base.encode(
             color=alt.Color(
                 f"{metrics['color_col']}:N",
                 title=get_track_page_display_label(metrics["color_col"]),
+                legend=alt.Legend(orient=color_legend_orient),
             )
         )
     else:
-        points = base
+        points = base.encode(
+            color=alt.value("#4c78a8")
+        )
 
-    chart = points
+    show_size_legend = True
+    if metrics["color_col"] and metrics["color_col"] != "None":
+        n_color_groups = plot_df[metrics["color_col"]].dropna().nunique()
+        if n_color_groups > 8:
+            show_size_legend = False
 
-    if show_trendline and line_df is not None:
+    if metrics["size_col"] and metrics["size_col"] != "None":
+        points = points.encode(
+            size=alt.Size(
+                "size_scaled_raw:Q",
+                title=get_track_page_display_label(metrics["size_col"]),
+                scale=alt.Scale(
+                    type="sqrt",
+                    range=[4, controls["bubble_max_size"]],
+                    domain=[0, metrics["size_scale_max"]]
+                    if metrics["size_scale_max"] else None,
+                    clamp=True,
+                ),
+                legend=(
+                    alt.Legend(
+                        orient="right",
+                        title=get_track_page_display_label(metrics["size_col"]),
+                    )
+                    if show_size_legend
+                    else None
+                ),
+            )
+        )
+
+    layers = [points]
+
+    if controls["show_median_lines"]:
+        x_rule_df = pd.DataFrame({"x_plot": [metrics["x_median"]]})
+        y_rule_df = pd.DataFrame({"y_plot": [metrics["y_median"]]})
+
+        x_rule = (
+            alt.Chart(x_rule_df)
+            .mark_rule(
+                color="#B8C4D6",
+                strokeDash=[6, 4],
+                strokeWidth=1.5,
+                opacity=0.9,
+            )
+            .encode(x="x_plot:Q")
+        )
+        y_rule = (
+            alt.Chart(y_rule_df)
+            .mark_rule(
+                color="#B8C4D6",
+                strokeDash=[6, 4],
+                strokeWidth=1.5,
+                opacity=0.9,
+            )
+            .encode(y="y_plot:Q")
+        )
+
+        layers.extend([x_rule, y_rule])
+
+    if controls["show_trendline"] and line_df is not None:
         line = (
             alt.Chart(line_df)
             .mark_line(strokeWidth=3)
@@ -652,19 +778,52 @@ def create_freeform_scatter_chart(
                 y="y_plot:Q",
             )
         )
-        chart = chart + line
+        layers.append(line)
 
-    subtitle = (
-        f"r = {metrics['pearson_r']:.3f} | R² = {metrics['r_squared']:.3f} | "
-        f"{metrics['rows_used']:,} tracks"
-    )
+    subtitle_parts = [
+        f"r = {metrics['pearson_r']:.3f}",
+        f"R² = {metrics['r_squared']:.3f}",
+        f"{metrics['rows_used']:,} tracks",
+    ]
 
-    return chart.properties(
+    if metrics["color_col"] and metrics["color_col"] != "None":
+        subtitle_parts.append(
+            f"Color = {get_track_page_display_label(metrics['color_col'])}"
+        )
+
+    if metrics["size_col"] and metrics["size_col"] != "None":
+        if show_size_legend:
+            subtitle_parts.append(
+                f"Size = {get_track_page_display_label(metrics['size_col'])}"
+            )
+        else:
+            subtitle_parts.append(
+                f"Size = {get_track_page_display_label(metrics['size_col'])} (tooltip only)"
+            )
+
+    if controls["show_median_lines"]:
+        subtitle_parts.append("Median lines shown")
+
+    if metrics["apply_jitter"]:
+        subtitle_parts.append(
+            f"Jitter = {metrics['jitter_strength']:.3f} (display only)"
+        )
+
+    if (
+        metrics["transform_x"] != "None"
+        or metrics["transform_y"] != "None"
+    ):
+        subtitle_parts.append("Metrics and fitted line use displayed scale")
+
+    return alt.layer(*layers).properties(
         width=750,
         height=500,
         title={
-            "text": f"{get_track_page_display_label(metrics['x_col'])} vs {get_track_page_display_label(metrics['y_col'])}",
-            "subtitle": [subtitle],
+            "text": (
+                f"{get_track_page_display_label(metrics['x_col'])} vs "
+                f"{get_track_page_display_label(metrics['y_col'])}"
+            ),
+            "subtitle": [" | ".join(subtitle_parts)],
         },
     )
 
@@ -899,6 +1058,7 @@ def main() -> None:
             x_col=controls["x_col"],
             y_col=controls["y_col"],
             color_col=controls["color_col"],
+            size_col=controls["size_col"],
             transform_x=controls["transform_x"],
             transform_y=controls["transform_y"],
             apply_jitter=controls["apply_jitter"],
@@ -930,7 +1090,7 @@ def main() -> None:
             plot_df=plot_df,
             line_df=line_df,
             metrics=metrics,
-            show_trendline=controls["show_trendline"],
+            controls=controls,
         )
 
     st.altair_chart(chart, width="stretch")

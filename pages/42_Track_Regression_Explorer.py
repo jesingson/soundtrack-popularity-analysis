@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import altair as alt
+import numpy as np
+import pandas as pd
+from scipy import stats
 import streamlit as st
 
 from app.app_controls import (
@@ -178,6 +182,193 @@ def build_track_modeling_takeaway(coef_df, target_col: str) -> str:
         f"and {strong_effects} predictors sit at or above the model’s median absolute effect size."
     )
 
+def create_qq_plot(
+    values: pd.Series,
+    chart_title: str,
+    x_label: str = "Theoretical quantiles",
+    y_label: str = "Observed values",
+) -> alt.Chart:
+    """
+    Create a Q-Q plot against a normal distribution.
+
+    Args:
+        values: Numeric series to compare against theoretical normal quantiles.
+        chart_title: Chart title.
+        x_label: X-axis label.
+        y_label: Y-axis label.
+
+    Returns:
+        alt.Chart: Q-Q scatterplot with reference line.
+    """
+    clean = pd.to_numeric(values, errors="coerce").dropna()
+
+    if len(clean) < 3:
+        raise ValueError("At least 3 non-null values are required for a Q-Q plot.")
+
+    osm, osr = stats.probplot(clean, dist="norm", fit=False)
+    slope, intercept, r = stats.probplot(clean, dist="norm", fit=True)[1]
+
+    qq_df = pd.DataFrame({
+        "theoretical": osm,
+        "observed": osr,
+    })
+
+    line_x = np.array([float(np.min(osm)), float(np.max(osm))])
+    line_df = pd.DataFrame({
+        "theoretical": line_x,
+        "observed": intercept + slope * line_x,
+    })
+
+    points = (
+        alt.Chart(qq_df)
+        .mark_circle(size=45, opacity=0.8)
+        .encode(
+            x=alt.X("theoretical:Q", title=x_label),
+            y=alt.Y("observed:Q", title=y_label),
+            tooltip=[
+                alt.Tooltip("theoretical:Q", title="Theoretical quantile", format=".3f"),
+                alt.Tooltip("observed:Q", title="Observed value", format=".3f"),
+            ],
+        )
+    )
+
+    ref_line = (
+        alt.Chart(line_df)
+        .mark_line(strokeWidth=2, color="#ff6b6b")
+        .encode(
+            x="theoretical:Q",
+            y="observed:Q",
+        )
+    )
+
+    return (points + ref_line).properties(
+        width=420,
+        height=320,
+        title={
+            "text": chart_title,
+            "subtitle": [f"Reference-line fit correlation: {r:.3f}"],
+        },
+    )
+
+
+def render_track_residual_diagnostics(
+    results,
+    target_col: str,
+) -> None:
+    """
+    Render regression residual Q-Q diagnostics for the track model.
+
+    Args:
+        results: Fitted statsmodels OLS results object.
+        target_col: Current modeled target column.
+    """
+    st.subheader("Residual Diagnostics")
+    st.caption(
+        "This Q-Q plot checks whether the fitted model residuals roughly follow a normal "
+        "distribution. Large tail departures suggest that inference may still be influenced "
+        "by skew, heavy tails, or outliers."
+    )
+
+    residuals = pd.Series(results.resid, name="residuals")
+
+    chart = create_qq_plot(
+        values=residuals,
+        chart_title=f"Q-Q Plot: Regression Residuals for {get_track_page_display_label(target_col)}",
+        y_label="Residuals",
+    )
+    st.altair_chart(chart, width="stretch")
+
+    residuals_clean = residuals.dropna()
+    _, _, r = stats.probplot(residuals_clean, dist="norm", fit=True)[1]
+
+    if r >= 0.99:
+        takeaway = (
+            "Residuals track the normal reference line very closely, which is encouraging "
+            "for coefficient inference."
+        )
+    elif r >= 0.97:
+        takeaway = (
+            "Residuals are broadly close to normal, though there may still be mild tail deviations."
+        )
+    elif r >= 0.94:
+        takeaway = (
+            "Residuals show noticeable departures from normality, especially in the tails, "
+            "so p-values and intervals should be interpreted with some caution."
+        )
+    else:
+        takeaway = (
+            "Residuals depart materially from the normal reference line, suggesting that "
+            "the fitted model still has meaningful tail or outlier behavior."
+        )
+
+    st.caption(f"💡 {takeaway}")
+
+
+def render_track_target_qq_comparison(
+    filtered_track_df: pd.DataFrame,
+    target_col: str,
+) -> None:
+    """
+    Render a side-by-side Q-Q comparison for the raw and modeled track target.
+
+    Args:
+        filtered_track_df: Filtered track dataframe used for modeling.
+        target_col: Current modeled target column.
+    """
+    raw_target_map = {
+        "log_lfm_track_listeners": "lfm_track_listeners",
+        "log_lfm_track_playcount": "lfm_track_playcount",
+        "spotify_popularity": None,
+    }
+
+    raw_target_col = raw_target_map.get(target_col)
+
+    if not raw_target_col or raw_target_col not in filtered_track_df.columns:
+        return
+
+    st.subheader("Target Distribution Check")
+    st.caption(
+        "This comparison shows why the log-transformed target is used in the regression. "
+        "If the transformed target follows the reference line more closely than the raw target, "
+        "the transformation is helping stabilize the modeling problem."
+    )
+
+    left, right = st.columns(2)
+
+    with left:
+        raw_chart = create_qq_plot(
+            values=filtered_track_df[raw_target_col],
+            chart_title=f"Q-Q Plot: Raw {get_track_page_display_label(raw_target_col)}",
+            y_label=get_track_page_display_label(raw_target_col),
+        )
+        st.altair_chart(raw_chart, width="stretch")
+
+    with right:
+        log_chart = create_qq_plot(
+            values=filtered_track_df[target_col],
+            chart_title=f"Q-Q Plot: {get_track_page_display_label(target_col)}",
+            y_label=get_track_page_display_label(target_col),
+        )
+        st.altair_chart(log_chart, width="stretch")
+
+    raw_clean = pd.to_numeric(filtered_track_df[raw_target_col], errors="coerce").dropna()
+    log_clean = pd.to_numeric(filtered_track_df[target_col], errors="coerce").dropna()
+
+    _, _, raw_r = stats.probplot(raw_clean, dist="norm", fit=True)[1]
+    _, _, log_r = stats.probplot(log_clean, dist="norm", fit=True)[1]
+
+    if log_r > raw_r:
+        st.caption(
+            f"💡 The transformed target is closer to the normal reference line "
+            f"(fit correlation {log_r:.3f} vs {raw_r:.3f}), which supports the use of "
+            f"{get_track_page_display_label(target_col)} in the regression."
+        )
+    else:
+        st.caption(
+            f"💡 The transformed target is not materially closer to the normal reference line "
+            f"(fit correlation {log_r:.3f} vs {raw_r:.3f}), so the transformation mainly helps "
+            "with scale compression rather than normality."
+        )
 
 def main() -> None:
     st.set_page_config(
@@ -374,6 +565,21 @@ def main() -> None:
         st.subheader("Full OLS Summary")
         st.text(results.summary().as_text())
 
+    if regression_controls["show_residual_qq"]:
+        render_track_residual_diagnostics(
+            results=results,
+            target_col=target_col,
+        )
+
+    if regression_controls["show_target_qq"]:
+        render_track_target_qq_comparison(
+            filtered_track_df=filtered_track_df,
+            target_col=target_col,
+        )
+
+    if show_model_summary:
+        st.subheader("Full OLS Summary")
+        st.text(results.summary().as_text())
 
 if __name__ == "__main__":
     main()
