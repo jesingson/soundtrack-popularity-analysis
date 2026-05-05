@@ -41,11 +41,14 @@ def render_home() -> None:
 
     st.write(
         """
-        Welcome to an interactive companion for a University of Michigan applied
-        data science milestone project on film soundtrack popularity. The project
-        combines film metadata, soundtrack album data, Last.fm listening metrics,
-        awards data, and track-level audio features to explore what drives
-        soundtrack performance from 2015–2025.
+        Welcome! This is an interactive data app I built as part of my University of
+        Michigan Applied Data Science coursework to explore what actually drives
+        soundtrack popularity.
+
+        It combines film metadata, listening metrics, awards data, and audio features
+        into a unified experience—letting you move from high-level patterns to
+        statistical modeling and track-level behavior across soundtracks released
+        from 2015–2025.
         """
     )
 
@@ -77,7 +80,7 @@ def render_home() -> None:
         )
         render_explorer_button("Open Dataset Explorer", "Dataset_Explorer")
         render_explorer_button("Open Distribution Explorer", "Distribution_Explorer")
-        render_explorer_button("Open Concentration Explorer", "Concentration_Explorer")
+        render_explorer_button("Open Relationship Explorer", "Relationship_Explorer")
 
     with col2:
         st.markdown("#### 📈 Modeling & drivers")
@@ -315,6 +318,14 @@ def render_home() -> None:
             "Horizon chart from the Track Sequence Explorer",
         )
         render_explorer_button("Open Track Sequence Explorer", "Track_Sequence_Explorer")
+
+    st.divider()
+
+    st.caption(
+        "Built by Jaime Singson • "
+        "LinkedIn: https://www.linkedin.com/in/jaimesingson/ • "
+        "GitHub: https://github.com/jesingson/soundtrack-popularity-analysis"
+    )
 
 st.set_page_config(
     page_title="Soundtrack Popularity Explorer",
