@@ -428,8 +428,8 @@ def build_freeform_scatter_data(
             "At least two valid rows remain after applying transforms."
         )
 
-    x = plot_df["x_value"].to_numpy()
-    y = plot_df["y_value"].to_numpy()
+    x = plot_df["x_value"].astype("float64").to_numpy()
+    y = plot_df["y_value"].astype("float64").to_numpy()
 
     slope, intercept = np.polyfit(x, y, 1)
     x_min, x_max = float(x.min()), float(x.max())
@@ -1356,17 +1356,25 @@ def main() -> None:
             st.warning("Please choose different X-axis and Y-axis fields.")
             return
 
-        plot_df, line_df, metrics = build_freeform_scatter_data(
-            explorer_df=filtered_explorer_df,
-            x_col=controls["x_col"],
-            y_col=controls["y_col"],
-            color_col=controls["color_col"],
-            size_col=controls["size_col"],
-            transform_x=controls["transform_x"],
-            transform_y=controls["transform_y"],
-            apply_jitter=controls["apply_jitter"],
-            jitter_strength=controls["jitter_strength"],
-        )
+        try:
+            plot_df, line_df, metrics = build_freeform_scatter_data(
+                explorer_df=filtered_explorer_df,
+                x_col=controls["x_col"],
+                y_col=controls["y_col"],
+                color_col=controls["color_col"],
+                size_col=controls["size_col"],
+                transform_x=controls["transform_x"],
+                transform_y=controls["transform_y"],
+                apply_jitter=controls["apply_jitter"],
+                jitter_strength=controls["jitter_strength"],
+            )
+        except ValueError as exc:
+            st.warning(str(exc))
+            st.info(
+                "Switch the affected axis transform to `None`, or choose a field with "
+                "non-negative values before using `Log1p`."
+            )
+            return
 
         st.caption(
             get_relationship_view_explainer(

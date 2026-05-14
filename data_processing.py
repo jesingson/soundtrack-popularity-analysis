@@ -565,18 +565,36 @@ def normalize_genre_flags(
     Returns:
         pd.DataFrame: Album dataframe with normalized genre flag columns.
     """
+    albums_df = albums_df.copy()
+
     genre_cols = [
         "ambient_experimental", "classical_orchestral", "electronic",
         "hip_hop_rnb", "pop", "rock", "world_folk"
     ]
 
-    # Idempotent: bool/float/object -> int(0/1); NaN -> 0
-    albums_df[genre_cols] = (
-        albums_df[genre_cols]
-        .fillna(False)  # NaN -> False
-        .astype(bool)  # anything truthy -> True, False stays False
-        .astype(int)  # True/False -> 1/0
-    )
+    existing_genre_cols = [
+        col for col in genre_cols
+        if col in albums_df.columns
+    ]
+
+    for col in existing_genre_cols:
+        normalized = (
+            albums_df[col]
+            .replace({
+                "True": True,
+                "False": False,
+                "true": True,
+                "false": False,
+                "TRUE": True,
+                "FALSE": False,
+                "1": True,
+                "0": False,
+                1: True,
+                0: False,
+            })
+        )
+
+        albums_df[col] = normalized.where(normalized.notna(), False).astype(bool).astype(int)
 
     return albums_df
 

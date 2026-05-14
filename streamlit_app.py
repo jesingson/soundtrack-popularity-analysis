@@ -20,7 +20,7 @@ def render_findings_image(filename: str, caption: str) -> None:
     path = get_findings_image_path(filename)
 
     if path:
-        st.image(path, caption=caption, use_container_width=True)
+        st.image(path, caption=caption, width="stretch")
     else:
         st.info(f"Missing screenshot: `{IMAGE_DIR / filename}`")
 
@@ -147,7 +147,7 @@ def render_home() -> None:
             "R²": [0.16, 0.31, 0.23, 0.21],
         }
     )
-    st.dataframe(r2_df, hide_index=True, use_container_width=True)
+    st.dataframe(r2_df, hide_index=True, width="stretch")
     st.caption(
         "Genre-specific models suggest that soundtrack success follows different "
         "internal patterns depending on film context."
@@ -241,7 +241,7 @@ def render_home() -> None:
         "Track Sequence Explorer: genre-level energy arcs across normalized track position",
     )
 
-    render_explorer_button("Explore in Track Sequence Explorer", "Track_Sequence_Explorer")
+    render_explorer_button("Explore in Track Sequence Explorer", "Track_Sequence_Breakpoints_Explorer")
 
     st.divider()
 
@@ -270,7 +270,7 @@ def render_home() -> None:
             "award_chord_chart.png",
             "Chord chart from the Co-occurrence Explorer",
         )
-        render_explorer_button("Open Co-occurrence Explorer", "Co-occurrence_Explorer")
+        render_explorer_button("Open Co-occurrence Explorer", "Cooccurrence_Explorer")
 
     with viz_col2:
         st.markdown("### Ridge plot: listener distribution shifts")
@@ -317,7 +317,7 @@ def render_home() -> None:
             "track_sequence_horizon.png",
             "Horizon chart from the Track Sequence Explorer",
         )
-        render_explorer_button("Open Track Sequence Explorer", "Track_Sequence_Explorer")
+        render_explorer_button("Open Track Sequence Explorer", "Track_Sequence_Breakpoints_Explorer")
 
     st.divider()
 
