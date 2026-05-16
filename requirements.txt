@@ -7,3 +7,4 @@ plotly
 holoviews
 bokeh
 streamlit-bokeh
+psutil

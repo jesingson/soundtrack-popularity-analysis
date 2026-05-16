@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import os
+import psutil
 
 from app.ui import apply_app_styles
 
@@ -34,6 +36,11 @@ def render_explorer_button(label: str, page_name: str) -> None:
     """Render an external link button to a deployed Streamlit explorer page."""
     st.link_button(label, explorer_url(page_name))
 
+def show_memory_usage() -> None:
+    """Display current process memory usage in the sidebar."""
+    process = psutil.Process(os.getpid())
+    memory_mb = process.memory_info().rss / 1024 / 1024
+    st.sidebar.caption(f"Memory usage: {memory_mb:.1f} MB")
 
 def render_home() -> None:
     """Render the landing page, recommended explorers, key findings, and visual playground."""
@@ -333,6 +340,7 @@ st.set_page_config(
 )
 
 apply_app_styles()
+show_memory_usage()
 
 navigation = st.navigation(
     {
